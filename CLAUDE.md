@@ -10,6 +10,15 @@ A voice agent that learns and grows in real time. Core priorities, in order:
 - Design doc: @docs/design.md
 - Decision log: @docs/decisions.md
 
+## About me
+I'm a systems engineer (ex-Google) with some experience in inference performance, I studied mechatronics engineering for my bachelors so i am somewhat familiar with real time controls and automation, for my masters i studied computer science with a focus on artificial intelligence, during that time i learned alot about reinforcement learning, properties like DQN, PPO, Actor critic etc. for my career i worked under a performance analysis and optimization for AI team at google and learned a bit on optimizing performance of models on google tpus. My knowledge on these topics are very limited and might be outdated so please be patient with me
+
+## Working style
+- Be direct: if an approach is weak, say so and suggest a better one
+- For the learning system, be explicit about what is learning: the reward signal, what gets updated, and how often
+- Check current docs before using a library API you're unsure of; this stack changes fast
+- Flag any change that conflicts with docs/decisions.md
+
 ## Commands
 <!-- Fill in once the stack is chosen -->
 - Install: `...`
