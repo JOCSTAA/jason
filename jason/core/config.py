@@ -34,6 +34,7 @@ class MacLink(_Strict):
     heartbeat_s: Seconds = 2.0  # how often to check the link is alive
     timeout_s: Seconds = 10.0  # this long with no reply means the link is dead
     reconnect_max_s: Seconds = 10.0  # longest wait between reconnect attempts
+    clock_sync_s: Seconds = 5.0  # how often to measure clock offset and round trip
 
 
 class BrainLink(_Strict):

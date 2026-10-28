@@ -5,6 +5,8 @@ Every WebSocket message is one JSON object with a "kind" field:
     hello        brain → Mac, the first message on every connection
     new_session  brain → Mac, when a new day starts
     event        either way, one bus event
+    sync         Mac → brain, a clock-sync probe (see net/clocksync.py)
+    sync_reply   brain → Mac, the brain's receive and send times for a probe
 
 These are link plumbing, not bus events: they are never published or logged
 as events themselves (link_up / link_down system events record what happened).
@@ -42,15 +44,28 @@ class EventMsg(_Msg):
     event: AnyEvent
 
 
-Message = Annotated[Hello | NewSession | EventMsg, Field(discriminator="kind")]
+class Sync(_Msg):
+    kind: Literal["sync"] = "sync"
+    t1_ns: int  # Mac monotonic clock when sent
+
+
+class SyncReply(_Msg):
+    kind: Literal["sync_reply"] = "sync_reply"
+    t1_ns: int  # echoed from the sync
+    t2_ns: int  # brain monotonic clock when the sync arrived
+    t3_ns: int  # brain monotonic clock when this reply was sent
+
+
+AnyMessage = Hello | NewSession | EventMsg | Sync | SyncReply
+Message = Annotated[AnyMessage, Field(discriminator="kind")]
 
 _adapter: TypeAdapter[Message] = TypeAdapter(Message)
 
 
-def encode(msg: Hello | NewSession | EventMsg) -> str:
+def encode(msg: AnyMessage) -> str:
     return msg.model_dump_json()
 
 
-def decode(data: str | bytes) -> Hello | NewSession | EventMsg:
+def decode(data: str | bytes) -> AnyMessage:
     """Parse one message. Raises pydantic.ValidationError if it is malformed."""
     return _adapter.validate_json(data)

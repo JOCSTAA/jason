@@ -19,6 +19,11 @@ message at any moment. The brain listens (server); the Mac dials in (client).
 - While disconnected, this machine's events wait in the link's bus
   subscription (up to 1000, oldest dropped first) and are sent after
   reconnecting. Each machine's raw log has them either way.
+- Clock sync: every clock_sync_s the Mac sends a probe and the brain answers
+  with its own timestamps (net/clocksync.py). Each round trip is logged as a
+  latency_mark with stage "network_rtt"; the offset estimate is logged as a
+  "clock_offset" system event when it changes by more than 1 ms, or once a
+  minute. Both reach the brain's log too, like any Mac event.
 """
 
 import asyncio
@@ -34,15 +39,29 @@ from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 from websockets.http11 import Request, Response
 
+from jason.core import clock
 from jason.core import events as ev
 from jason.core.bus import EventBus
 from jason.core.config import BrainLink, MacLink
 from jason.core.events import SCHEMA_VERSION
-from jason.net.protocol import PROTOCOL_VERSION, EventMsg, Hello, NewSession, decode, encode
+from jason.net.clocksync import ClockSync, Sample
+from jason.net.protocol import (
+    PROTOCOL_VERSION,
+    AnyMessage,
+    EventMsg,
+    Hello,
+    NewSession,
+    Sync,
+    SyncReply,
+    decode,
+    encode,
+)
 
 log = logging.getLogger(__name__)
 
 _FIRST_RETRY_S = 0.5
+_OFFSET_LOG_CHANGE_NS = 1_000_000  # log a new offset estimate when it moves by 1 ms...
+_OFFSET_LOG_EVERY_NS = 60 * 1_000_000_000  # ...or at least once a minute
 
 
 class LinkAuthError(Exception):
@@ -102,7 +121,7 @@ class _Bridge:
         self._outbox.close()
 
 
-def _parse(raw: str | bytes) -> Hello | NewSession | EventMsg | None:
+def _parse(raw: str | bytes) -> AnyMessage | None:
     try:
         return decode(raw)
     except ValidationError as e:
@@ -188,9 +207,13 @@ class LinkServer:
         reason = "closed"
         try:
             async for raw in ws:
+                received = clock.monotonic_ns()  # t2 for a sync probe: as early as possible
                 msg = _parse(raw)
                 if isinstance(msg, EventMsg):
                     self._bridge.receive_event(msg.event)
+                elif isinstance(msg, Sync):
+                    reply = SyncReply(t1_ns=msg.t1_ns, t2_ns=received, t3_ns=clock.monotonic_ns())
+                    await ws.send(encode(reply))
                 elif msg is not None:
                     log.warning("ignored a %s message from the Mac", msg.kind)
         except ConnectionClosed as e:
@@ -216,6 +239,9 @@ class LinkClient:
         # Set once the brain has told us the session, i.e. once emit() works.
         self.ready = asyncio.Event()
         self.connected = asyncio.Event()
+        # Offset between the Mac's and the brain's monotonic clocks.
+        self.clocksync = ClockSync()
+        self._logged_offset: tuple[int, int] | None = None  # (offset_ns, when logged)
 
     async def run(self) -> None:
         """Connect, serve, and reconnect forever. Cancel the task to stop.
@@ -270,13 +296,22 @@ class LinkClient:
     async def _serve(self, ws: ClientConnection) -> None:
         self.connected.set()
         _system(self.bus, "link_up", peer=self.cfg.brain_url)
-        pump = asyncio.create_task(self._bridge.pump_out(ws))
+        # A new connection may mean the brain rebooted, which resets its clock.
+        self.clocksync.reset()
+        self._logged_offset = None
+        tasks = [
+            asyncio.create_task(self._bridge.pump_out(ws)),
+            asyncio.create_task(self._sync_loop(ws)),
+        ]
         reason = "closed"
         try:
             async for raw in ws:
+                received = clock.monotonic_ns()  # t4 for a sync reply: as early as possible
                 msg = _parse(raw)
                 if isinstance(msg, EventMsg):
                     self._bridge.receive_event(msg.event)
+                elif isinstance(msg, SyncReply):
+                    self._on_sync_reply(msg, received)
                 elif isinstance(msg, NewSession):
                     self.bus.session_id = msg.session_id
                 elif msg is not None:
@@ -285,8 +320,38 @@ class LinkClient:
             reason = str(e)
         finally:
             self.connected.clear()
-            pump.cancel()
-            with contextlib.suppress(asyncio.CancelledError, ConnectionClosed):
-                await pump
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with contextlib.suppress(asyncio.CancelledError, ConnectionClosed):
+                    await task
             _system(self.bus, "link_down", reason, peer=self.cfg.brain_url)
+
+    async def _sync_loop(self, ws: ClientConnection) -> None:
+        while True:
+            await ws.send(encode(Sync(t1_ns=clock.monotonic_ns())))
+            await asyncio.sleep(self.cfg.clock_sync_s)
+
+    def _on_sync_reply(self, msg: SyncReply, t4: int) -> None:
+        s = self.clocksync.add(msg.t1_ns, msg.t2_ns, msg.t3_ns, t4)
+        # Network round trip as its own latency stage (portability rule 6).
+        self.bus.emit(ev.LatencyMark, ev.LatencyMarkPayload(stage="network_rtt", duration_ns=s.rtt_ns))
+        best = self.clocksync.best
+        assert best is not None
+        if self._offset_worth_logging(best, t4):
+            self._logged_offset = (best.offset_ns, t4)
+            _system(
+                self.bus,
+                "clock_offset",
+                "brain clock minus Mac clock",
+                offset_ns=best.offset_ns,
+                error_ns=best.error_ns,
+                rtt_ns=best.rtt_ns,
+            )
+
+    def _offset_worth_logging(self, best: Sample, now: int) -> bool:
+        if self._logged_offset is None:
+            return True
+        offset, when = self._logged_offset
+        return abs(best.offset_ns - offset) > _OFFSET_LOG_CHANGE_NS or now - when > _OFFSET_LOG_EVERY_NS
 

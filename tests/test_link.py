@@ -14,7 +14,7 @@ from jason.core.config import BrainLink, MacLink
 from jason.log.rawlog import RawLog, read_events
 from jason.net import link as link_mod
 from jason.net.link import LinkAuthError, LinkClient, LinkServer, LinkVersionError
-from jason.net.protocol import EventMsg, Hello, decode, encode
+from jason.net.protocol import EventMsg, Hello, Sync, SyncReply, decode, encode
 
 TOKEN = "t" * 64
 SESSION = "day-0001_2026-10-28"
@@ -57,7 +57,11 @@ def make_client(tmp_path, port, token=TOKEN, machine="mac"):
     rawlog = RawLog(tmp_path / f"{machine}-state", machine)
     bus = EventBus(machine, rawlog)  # no session: the brain provides it
     cfg = MacLink(
-        brain_url=f"ws://127.0.0.1:{port}", token_file=Path("unused"), reconnect_max_s=0.2, **FAST
+        brain_url=f"ws://127.0.0.1:{port}",
+        token_file=Path("unused"),
+        reconnect_max_s=0.2,
+        clock_sync_s=0.05,
+        **FAST,
     )
     return LinkClient(bus, cfg, token), rawlog
 
@@ -237,3 +241,50 @@ async def test_incoming_event_claiming_to_be_local_is_dropped(brain):
         await ws.send(encode(EventMsg(event=fake)))
         await ws.send(encode(EventMsg(event=real)))
         assert await asyncio.wait_for(pings.get(), 3) == real
+
+
+# --- clock sync ---------------------------------------------------------------
+
+
+async def test_clock_offset_is_estimated(mac):
+    await eventually(lambda: mac.clocksync.best is not None)
+    best = mac.clocksync.best
+    # Both "machines" share this computer's clock, so the true offset is 0.
+    assert abs(best.offset_ns) <= best.error_ns + 1_000_000
+    assert best.rtt_ns < 1_000_000_000
+
+
+async def test_round_trips_are_logged_as_network_rtt(tmp_path, brain, mac):
+    def rtt_marks(machine):
+        return [
+            e for e in logged(tmp_path, machine)
+            if e.type == "latency_mark" and e.payload.stage == "network_rtt"
+        ]
+
+    await eventually(lambda: len(rtt_marks("mac")) >= 3)
+    # Mac events reach the brain's log too.
+    await eventually(lambda: len(rtt_marks("brain")) >= 1)
+
+
+async def test_clock_offset_is_logged_but_not_every_sample(tmp_path, brain, mac):
+    await eventually(
+        lambda: len([e for e in logged(tmp_path, "mac") if e.type == "latency_mark"]) >= 10
+    )
+    offsets = [
+        e for e in logged(tmp_path, "mac")
+        if e.type == "system" and e.payload.kind == "clock_offset"
+    ]
+    assert 1 <= len(offsets) < 10
+    assert {"offset_ns", "error_ns", "rtt_ns"} <= offsets[0].payload.data.keys()
+
+
+async def test_brain_answers_a_sync_probe(brain):
+    async with raw_connect(brain.port) as ws:
+        await ws.recv()  # hello
+        await ws.send(encode(Sync(t1_ns=123)))
+        while True:
+            reply = decode(await asyncio.wait_for(ws.recv(), 3))
+            if isinstance(reply, SyncReply):
+                break
+        assert reply.t1_ns == 123
+        assert reply.t2_ns <= reply.t3_ns
