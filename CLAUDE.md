@@ -32,6 +32,7 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 - Log per-stage latency in the voice pipeline
 - Work one milestone at a time (see design doc §9)
 - Small, focused commits with clear messages
+- Show the changes you plan to make in the staging area before committing, so i can read and approve them
 
 ## Rules for Claude
 - Propose a plan before any multi-file change

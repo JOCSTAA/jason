@@ -38,7 +38,7 @@ class MacLink(_Strict):
 
 class BrainLink(_Strict):
     listen_host: str = "0.0.0.0"
-    listen_port: Annotated[int, Field(ge=1, le=65535)] = 8765
+    listen_port: Annotated[int, Field(ge=0, le=65535)] = 8765  # 0 = any free port (tests)
     token_file: Path
     heartbeat_s: Seconds = 2.0
     timeout_s: Seconds = 10.0

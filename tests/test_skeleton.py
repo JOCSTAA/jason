@@ -11,6 +11,7 @@ MODULES = [
     "jason.core.state",
     "jason.net.link",
     "jason.net.clocksync",
+    "jason.net.protocol",
     "jason.log.rawlog",
     "jason.mac.main",
     "jason.brain.main",
