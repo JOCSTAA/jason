@@ -1,6 +1,6 @@
 # Jason — Design Doc
 
-_Last updated: 2026-10-27 (v2.1: core design confirmed; local LLM, own core and machine split decided)_
+_Last updated: 2026-10-28 (v2.2: added §3.3 Models)_
 
 Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
@@ -67,6 +67,29 @@ SLEEP ─► 1 consolidate memory  2 train Wonder  3 test Wonder  4 dream (if Wo
 - Every event is also appended to the raw log, so anything can be replayed and re-scored later.
 - The agent core must be able to start speaking on its own, not only after user input.
 - The camera joins later as another input stream on the Mac.
+
+### 3.3 Models
+
+Every model in the agent, where it runs, what it does, and how (or whether) it is trained. The 9B LLM fills several roles, so there are fewer models than components.
+
+| # | Model | Runs on | Job | How it is trained / updated | Status |
+|---|---|---|---|---|---|
+| 1 | **Silero VAD** | Mac (CPU) | Detects whether someone is speaking | Pretrained; frozen | Recommended (§11) |
+| 2 | **Smart Turn v3.x** (~8M params) | Mac (CPU) | Probability that the user has finished their turn; input to the floor controller | Pretrained; frozen | Recommended (§11) |
+| 3 | **Parakeet TDT 0.6B** | Mac | Streaming speech-to-text | Pretrained; frozen | Recommended (§11) |
+| 4 | **Kokoro-82M** | Mac | Text-to-speech | Pretrained; frozen. Later swap to Chatterbox or Cartesia | Recommended (§11) |
+| 5 | **Floor-controller policy** (contextual bandit; small actor-critic later) | Acts on the Mac; learner on Windows | Chooses silent / backchannel / respond / interject / ask / `think()` | Starts rule-based. Then learned from scratch: **updated live after each attributed reward**; retrained during sleep on real replay (plus dreams from M9); behind the frozen/learner swap and eval gate. Validated on the simulated user first | Approach [Decided]; library [Open] (Vowpal Wabbit or small PyTorch) |
+| 6 | **Qwen3.5-9B (4-bit) + one LoRA adapter** | Windows 4090 | Main LLM: generates what Jason says. Also the default host for models 7 and 9 until they get their own | Base weights frozen. **Only the LoRA trains, during sleep**: context distillation + DPO on corrections, with replay; only with ≥ ~200 new labeled examples and a passed eval gate; hot-swapped next morning | [Decided] (serving engine [Open]) |
+| 7 | **Reaction judge** | Windows (if local) | Classifies each user utterance: is it feedback, which action it targets, polarity, strength (§5.3 B) | Live labels are re-scored nightly by model 10; those re-scored labels can later train a dedicated small classifier | [Open] (needed by M3): the 9B with a prompt, or a small separate classifier |
+| 8 | **Embedding model** | Windows | Turns memory entries and queries into vectors for long-term memory search (§8.4) | Pretrained; frozen. Changing it means re-embedding the whole store | [Open] (needed by M2) |
+| 9 | **Wonder** (user simulator) | Windows 4090 | Predicts the user's next utterance and reaction; used for curiosity, `think()` and dreaming (§6) | M3–M6: the 9B with a "predict the user" prompt, no training (predict-and-log only). From M7: **trained nightly** on (context, action → next user turn, reaction) pairs from the raw log; enabled for `think()` only once it beats a baseline | [Open] (M7): prompt on the 9B, own LoRA on the 9B, or a separate 2–4B model |
+| 10 | **Hosted frontier model** (Claude / GPT / Gemini) | Cloud, sleep only | Re-scores the day's rewards, rewrites prompts (GEPA), writes corrected replies for DPO | Not trained; used as a tool | Recommended (§11); provider [Open] (needed by M6) |
+
+Not counted: echo cancellation (WebRTC AEC / macOS voice-processing I/O) is signal processing, not a learned model.
+
+**What actually learns from experience:** the floor-controller policy (live, every reaction), the LoRA on the 9B (nightly), and Wonder once it trains (nightly, from M7). Everything else is frozen.
+
+**GPU budget note:** models 6, 8, and models 7 and 9 when they run on the 9B, all share the 4090's 16 GB by day. Live replies must take priority over judging and Wonder logging.
 
 ---
 
@@ -348,6 +371,8 @@ Needed during M0–M1:
 - Serving engine on Windows: vLLM (needs WSL2 on Windows) vs. llama.cpp server (native). Both must load the chosen model and hot-swap LoRA. Verify Qwen3.5's architecture is supported before committing.
 
 Can wait:
+- Embedding model for long-term memory search (needed by M2; §3.3 model 8).
+- Reaction-judge model: the 9B with a prompt vs. a small separate classifier (needed by M3; §3.3 model 7).
 - First learned behavior (needed by M4; proposed `ask` vs. not).
 - Hosted API provider and monthly cap for night jobs (needed by M6).
 - Sleep schedule and idle triggers (M6).
