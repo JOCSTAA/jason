@@ -174,3 +174,10 @@ def test_short_token_rejected(tmp_path):
     file.write_text("password\n")
     with pytest.raises(TokenError, match="too short"):
         load_token(file)
+
+
+def test_token_path_that_is_a_folder_explains_the_docker_cause(tmp_path):
+    folder = tmp_path / "link_token"
+    folder.mkdir()  # what Docker creates when the mounted file is missing
+    with pytest.raises(TokenError, match="is a folder"):
+        load_token(folder)

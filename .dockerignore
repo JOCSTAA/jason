@@ -1,0 +1,11 @@
+# Only pyproject.toml, uv.lock, .python-version, jason/ and config/ go into the image.
+.git
+.venv
+.vscode
+.pytest_cache
+**/__pycache__
+*.pyc
+docs
+scripts
+tests
+logs

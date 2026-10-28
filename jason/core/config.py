@@ -93,6 +93,12 @@ class TokenError(Exception):
 def load_token(token_file: Path) -> str:
     """The link token: JASON_LINK_TOKEN if set, otherwise the token file."""
     token = os.environ.get(TOKEN_ENV, "").strip()
+    if not token and Path(token_file).is_dir():
+        # What Docker leaves behind when it mounts a token file that didn't exist.
+        raise TokenError(
+            f"{token_file} is a folder, not a token file. If Docker created it, "
+            "delete it on the host, run `jason gen-token`, and start again."
+        )
     if not token:
         try:
             token = Path(token_file).read_text(encoding="utf-8").strip()

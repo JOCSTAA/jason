@@ -1,0 +1,27 @@
+# Runs the brain in its container:
+#
+#   docker compose up --build -d      start (rebuilding if the code changed)
+#   docker compose logs -f brain      watch its output
+#   docker compose exec brain jason new-day
+#   docker compose down               stop (sends SIGTERM: a clean shutdown)
+#
+# Jason's data stays on the host, in ~/jason-data (C:\Users\<you>\jason-data on
+# Windows), so rebuilding or deleting the container never touches it. Set
+# JASON_DATA to use another folder, and JASON_PORT to listen on another host
+# port. Create the token first (`jason gen-token`): if the token file is
+# missing, Docker creates an empty folder in its place.
+
+services:
+  brain:
+    build: .
+    image: jason-brain:dev
+    restart: unless-stopped
+    ports:
+      - "${JASON_PORT:-8765}:8765"  # host port : container port
+    volumes:
+      - ${JASON_DATA:-~/jason-data}/state:/state
+      - ${JASON_DATA:-~/jason-data}/link_token:/secrets/link_token:ro
+    environment:
+      # Only affects the dates in session ids, which are for humans.
+      TZ: ${JASON_TZ:-America/New_York}
+    stop_grace_period: 15s
