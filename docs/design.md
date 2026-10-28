@@ -91,7 +91,7 @@ Not counted: echo cancellation (WebRTC AEC / macOS voice-processing I/O) is sign
 
 **GPU budget note:** models 6, 8, and models 7 and 9 when they run on the 9B, all share the 4090's 16 GB by day. Live replies must take priority over judging and Wonder logging.
 
-### 3.4 Portability: cloud brain [Proposed]
+### 3.4 Portability: cloud brain [Decided]
 
 The Windows laptop may later be replaced or supplemented by a rented cloud GPU for more compute. The Mac keeps everything time-critical (audio, VAD, turn detection, STT, TTS, floor controller), so the brain can move without a redesign, as long as M0 is built for it.
 

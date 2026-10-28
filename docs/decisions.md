@@ -6,6 +6,7 @@ Format: `YYYY-MM-DD — Decision — Why — Alternatives rejected`
 
 ---
 
+- 2026-10-28 — M0 builds the brain to be portable: configurable brain address, internet-ready Mac↔brain transport over a private network, containerized brain services, one versioned state location, separate serving and sleep processes, network RTT logged — Lets the brain move to a rented cloud GPU later in days rather than weeks — Hard-wiring the design to the Windows laptop on the LAN
 - 2026-10-27 — Windows laptop (RTX 4090) is an always-on server on the LAN (Ethernet), left on overnight for sleep jobs — Enables the Mac/Windows split from M0 and nightly sleep — Single-machine start
 - 2026-10-27 — Build our own asyncio core from day one; borrow Pipecat components (e.g. Smart Turn, transports) only where needed — Owner wants to understand every part; frameworks assume request-response turns while Jason's loop treats silence, interjection and thinking as learned actions — Pipecat or LiveKit Agents as the main framework
 - 2026-10-27 — Live LLM runs locally: Qwen3.5-9B (4-bit) on the RTX 4090 Laptop behind a server that hot-swaps LoRA adapters (serving engine still open) — Keeps weight-level learning possible; no per-turn cost — Hosted live LLM; larger serving-only models
