@@ -1,0 +1,1 @@
+"""Mac-role entry point."""

@@ -1,0 +1,34 @@
+[project]
+name = "jason"
+version = "0.1.0"
+description = "A voice agent that learns and grows in real time."
+authors = [
+    { name = "Joshogbonda", email = "joshogbonda@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.14.1",
+    "websockets>=17.3",
+]
+
+[project.scripts]
+jason = "jason.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# Flat layout: the package lives at ./jason, not ./src/jason.
+module-root = ""
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1",
+]
