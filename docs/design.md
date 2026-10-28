@@ -1,6 +1,6 @@
 # Jason — Design Doc
 
-_Last updated: 2026-10-28 (v2.2: added §3.3 Models)_
+_Last updated: 2026-10-28 (v2.3: added §3.4 Portability: cloud brain; M0 scope updated)_
 
 Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
@@ -90,6 +90,27 @@ Not counted: echo cancellation (WebRTC AEC / macOS voice-processing I/O) is sign
 **What actually learns from experience:** the floor-controller policy (live, every reaction), the LoRA on the 9B (nightly), and Wonder once it trains (nightly, from M7). Everything else is frozen.
 
 **GPU budget note:** models 6, 8, and models 7 and 9 when they run on the 9B, all share the 4090's 16 GB by day. Live replies must take priority over judging and Wonder logging.
+
+### 3.4 Portability: cloud brain [Proposed]
+
+The Windows laptop may later be replaced or supplemented by a rented cloud GPU for more compute. The Mac keeps everything time-critical (audio, VAD, turn detection, STT, TTS, floor controller), so the brain can move without a redesign, as long as M0 is built for it.
+
+**Two ways to add compute:**
+
+| Goal | Move | Effort | Conflicts with decisions? |
+|---|---|---|---|
+| More training power (bigger LoRA runs, GRPO, larger Wonder) | Keep serving on Windows; rent a cloud GPU only for the nightly sleep job (Stack C in `stack-survey.md`) | Low: sleep is already a separate batch pipeline | No |
+| Bigger live model (e.g. ~27B+) | Move serving, and likely the whole brain, to an always-on cloud GPU | Medium | Yes: reverses "live LLM runs locally on the 4090" and "Windows is the always-on server" |
+
+**What changes in the cloud:** network round trip rises from ~5 ms to ~20–80 ms (still within the §10 budget, but it eats into `think()`); transcripts, memory and rewards cross the internet, so the link needs encryption and authentication; rented GPU machines are often temporary, so Jason's state must live on persistent storage; and Jason depends on the internet by day, not only at night.
+
+**M0 portability rules** (cheap now, expensive to retrofit):
+1. The brain's address is configuration; nothing assumes the LAN or Windows paths.
+2. Mac↔brain transport works over the internet from day one (e.g. WebSocket or gRPC over a Tailscale/WireGuard network), so home LAN and cloud look the same to the code.
+3. Brain services are containerized (Docker with CUDA) so one image runs on Windows (WSL2) and on cloud Linux.
+4. All of Jason's state (memory, raw log, adapters, policy versions) lives in one versioned location that can be synced or moved.
+5. Serving and sleep jobs are separate processes, so either can move on its own.
+6. Network round-trip time is logged as its own latency stage.
 
 ---
 
@@ -349,7 +370,7 @@ Each milestone has a measurable exit criterion.
 
 | # | Milestone | Scope | Exit criterion |
 |---|---|---|---|
-| **M0** | Setup | Repo layout, CLAUDE.md, pinned environment (both machines), event schema, raw logging, LAN link | Mac↔Windows event round trip logged; one entry point |
+| **M0** | Setup | Repo layout, CLAUDE.md, pinned environment (both machines), event schema, raw logging, LAN link; follows the §3.4 portability rules (configurable brain address, internet-ready transport, containerized brain, single state location, separate serving/sleep processes, network RTT logged) | Mac↔Windows event round trip logged; one entry point |
 | **M1** | Conversation loop | Mic → AEC → VAD/Smart Turn → STT → local LLM → TTS → speaker, across the split; barge-in | End-to-end voice conversation, < 1 s median to first audio, per-stage latency logged |
 | **M2** | Memory v1 | Raw log, STM file, LTM entries + search, wake-up briefing, manual "sleep" that consolidates | Recalls facts across sessions on a 20-question own-conversation test |
 | **M3** | Feedback signals + Wonder logging | Reaction classifier, credit assignment, implicit signals, re-scoring script; Wonder predict-and-log | Classifier agreement with hand labels ≥ target on 100 utterances; Wonder accuracy tracked daily |
