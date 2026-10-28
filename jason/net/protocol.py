@@ -8,6 +8,11 @@ Every WebSocket message is one JSON object with a "kind" field:
     sync         Mac → brain, a clock-sync probe (see net/clocksync.py)
     sync_reply   brain → Mac, the brain's receive and send times for a probe
 
+On the brain's separate /admin address (used by `jason new-day`):
+
+    command         → brain, e.g. {"kind": "command", "name": "new_day"}
+    command_result  ← brain, whether it worked and a message for the user
+
 These are link plumbing, not bus events: they are never published or logged
 as events themselves (link_up / link_down system events record what happened).
 """
@@ -56,7 +61,18 @@ class SyncReply(_Msg):
     t3_ns: int  # brain monotonic clock when this reply was sent
 
 
-AnyMessage = Hello | NewSession | EventMsg | Sync | SyncReply
+class Command(_Msg):
+    kind: Literal["command"] = "command"
+    name: str
+
+
+class CommandResult(_Msg):
+    kind: Literal["command_result"] = "command_result"
+    ok: bool
+    message: str
+
+
+AnyMessage = Hello | NewSession | EventMsg | Sync | SyncReply | Command | CommandResult
 Message = Annotated[AnyMessage, Field(discriminator="kind")]
 
 _adapter: TypeAdapter[Message] = TypeAdapter(Message)

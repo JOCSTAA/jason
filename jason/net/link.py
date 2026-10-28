@@ -19,6 +19,9 @@ message at any moment. The brain listens (server); the Mac dials in (client).
 - While disconnected, this machine's events wait in the link's bus
   subscription (up to 1000, oldest dropped first) and are sent after
   reconnecting. Each machine's raw log has them either way.
+- Admin: the brain also accepts short-lived connections at the /admin path
+  (same token) that send one command, e.g. "new_day" from `jason new-day`.
+  They don't replace the Mac's connection.
 - Clock sync: every clock_sync_s the Mac sends a probe and the brain answers
   with its own timestamps (net/clocksync.py). Each round trip is logged as a
   latency_mark with stage "network_rtt"; the offset estimate is logged as a
@@ -31,6 +34,7 @@ import contextlib
 import hmac
 import logging
 import random
+from collections.abc import Awaitable, Callable, Mapping
 from http import HTTPStatus
 
 from pydantic import ValidationError
@@ -48,6 +52,8 @@ from jason.net.clocksync import ClockSync, Sample
 from jason.net.protocol import (
     PROTOCOL_VERSION,
     AnyMessage,
+    Command,
+    CommandResult,
     EventMsg,
     Hello,
     NewSession,
@@ -60,6 +66,7 @@ from jason.net.protocol import (
 log = logging.getLogger(__name__)
 
 _FIRST_RETRY_S = 0.5
+ADMIN_PATH = "/admin"
 _OFFSET_LOG_CHANGE_NS = 1_000_000  # log a new offset estimate when it moves by 1 ms...
 _OFFSET_LOG_EVERY_NS = 60 * 1_000_000_000  # ...or at least once a minute
 
@@ -76,7 +83,7 @@ class _NoHello(Exception):
     """The server didn't start with a hello; treated like any failed connection."""
 
 
-def _auth_header(token: str) -> str:
+def auth_header(token: str) -> str:
     return f"Bearer {token}"
 
 
@@ -135,10 +142,18 @@ def _parse(raw: str | bytes) -> AnyMessage | None:
 class LinkServer:
     """Runs on the brain. Accepts one Mac at a time; a newer connection replaces an older one."""
 
-    def __init__(self, bus: EventBus, cfg: BrainLink, token: str) -> None:
+    def __init__(
+        self,
+        bus: EventBus,
+        cfg: BrainLink,
+        token: str,
+        commands: Mapping[str, Callable[[], Awaitable[str]]] | None = None,
+    ) -> None:
         self.bus = bus
         self.cfg = cfg
-        self._expected = _auth_header(token).encode()
+        self._expected = auth_header(token).encode()
+        # Admin commands by name; each returns a message for the user.
+        self._commands = dict(commands or {})
         self._bridge = _Bridge(bus)
         self._server: Server | None = None
         self._ws: ServerConnection | None = None  # the Mac currently connected
@@ -186,6 +201,9 @@ class LinkServer:
         return conn.respond(HTTPStatus.UNAUTHORIZED, "bad or missing link token\n")
 
     async def _handle(self, ws: ServerConnection) -> None:
+        if ws.request is not None and ws.request.path.rstrip("/") == ADMIN_PATH:
+            await self._admin(ws)
+            return
         self._latest = ws
         if self._ws is not None:
             await self._ws.close(reason="replaced by a newer connection")
@@ -198,6 +216,27 @@ class LinkServer:
                 await self._serve(ws)
             finally:
                 self._ws = None
+
+    async def _admin(self, ws: ServerConnection) -> None:
+        """Run one command from `jason new-day` (or similar) and reply with the result."""
+        try:
+            msg = _parse(await asyncio.wait_for(ws.recv(), self.cfg.timeout_s))
+        except (TimeoutError, ConnectionClosed):
+            return
+        if not isinstance(msg, Command):
+            result = CommandResult(ok=False, message="expected a command")
+        elif (handler := self._commands.get(msg.name)) is None:
+            result = CommandResult(ok=False, message=f"unknown command {msg.name!r}")
+        else:
+            try:
+                result = CommandResult(ok=True, message=await handler())
+            except Exception as e:  # report it to the user instead of dropping the connection
+                log.exception("admin command %s failed", msg.name)
+                result = CommandResult(ok=False, message=f"{msg.name} failed: {e}")
+        name = msg.name if isinstance(msg, Command) else "?"
+        _system(self.bus, "admin_command", result.message, name=name, ok=result.ok)
+        with contextlib.suppress(ConnectionClosed):
+            await ws.send(encode(result))
 
     async def _serve(self, ws: ServerConnection) -> None:
         assert self.bus.session_id is not None, "the brain needs a session before accepting the Mac"
@@ -254,7 +293,7 @@ class LinkClient:
                 try:
                     async with connect(
                         self.cfg.brain_url,
-                        additional_headers={"Authorization": _auth_header(self._token)},
+                        additional_headers={"Authorization": auth_header(self._token)},
                         open_timeout=self.cfg.timeout_s,
                         ping_interval=self.cfg.heartbeat_s,
                         ping_timeout=self.cfg.timeout_s,
