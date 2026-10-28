@@ -9,7 +9,7 @@ A voice agent that learns and grows in real time. Core priorities, in order:
 
 - Design doc: @docs/design.md
 - Decision log: @docs/decisions.md
-- Survey of current stack: @docs/current-stack.md
+- Survey of current stack: @docs/stack-survey.md
 - Review of old work: @docs/old-repos-review.md
 
 ## About me
