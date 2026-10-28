@@ -3,6 +3,7 @@ import importlib
 import pytest
 
 MODULES = [
+    "jason.__main__",
     "jason.cli",
     "jason.core.events",
     "jason.core.bus",
