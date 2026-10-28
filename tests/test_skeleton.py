@@ -12,7 +12,7 @@ MODULES = [
     "jason.net.clocksync",
     "jason.log.rawlog",
     "jason.mac.main",
-    "jason.server.main",
+    "jason.brain.main",
 ]
 
 

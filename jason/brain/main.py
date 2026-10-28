@@ -1,0 +1,1 @@
+"""Brain-role entry point."""

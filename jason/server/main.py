@@ -1,1 +1,0 @@
-"""Server-role entry point."""
