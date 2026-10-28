@@ -6,6 +6,7 @@ Format: `YYYY-MM-DD — Decision — Why — Alternatives rejected`
 
 ---
 
+- 2026-10-28 — M0 environment: uv manages Python 3.12, the project `.venv` and a cross-platform `uv.lock`; dependencies pydantic v2, websockets, pytest, pytest-asyncio; stdlib `tomllib`/`argparse` for config and CLI; explicit `ping`/`pong` event types for round-trip and clock-offset measurement — One lockfile for macOS and Windows, uv installs the pinned Python, minimal dependencies — Plain venv + pip (no cross-platform lock, manual Python install); Conda (not needed without native CUDA libs); Typer/Click
 - 2026-10-28 — M0 builds the brain to be portable: configurable brain address, internet-ready Mac↔brain transport over a private network, containerized brain services, one versioned state location, separate serving and sleep processes, network RTT logged — Lets the brain move to a rented cloud GPU later in days rather than weeks — Hard-wiring the design to the Windows laptop on the LAN
 - 2026-10-27 — Windows laptop (RTX 4090) is an always-on server on the LAN (Ethernet), left on overnight for sleep jobs — Enables the Mac/Windows split from M0 and nightly sleep — Single-machine start
 - 2026-10-27 — Build our own asyncio core from day one; borrow Pipecat components (e.g. Smart Turn, transports) only where needed — Owner wants to understand every part; frameworks assume request-response turns while Jason's loop treats silence, interjection and thinking as learned actions — Pipecat or LiveKit Agents as the main framework
