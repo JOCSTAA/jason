@@ -8,6 +8,7 @@ MODULES = [
     "jason.core.bus",
     "jason.core.clock",
     "jason.core.config",
+    "jason.core.state",
     "jason.net.link",
     "jason.net.clocksync",
     "jason.log.rawlog",

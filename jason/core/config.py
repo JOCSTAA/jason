@@ -1,1 +1,124 @@
-"""TOML config loading."""
+"""TOML config loading, plus the link auth token.
+
+Each role has one config file (config/mac.toml, config/brain.toml). Settings
+that change when the brain moves (its address, where state lives) are here,
+not in code. The auth token is never in a config file or in git: it lives in
+its own file, or in the JASON_LINK_TOKEN environment variable.
+"""
+
+import os
+import secrets
+import tomllib
+from pathlib import Path
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+TOKEN_ENV = "JASON_LINK_TOKEN"
+DEFAULT_TOKEN_FILE = Path("~/jason-data/link_token")
+_MIN_TOKEN_CHARS = 32
+
+# Same rule as the raw log: the machine name becomes a folder name.
+MachineName = Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]+$")]
+Seconds = Annotated[float, Field(gt=0)]
+
+
+class _Strict(BaseModel):
+    # extra="forbid": a misspelled setting is an error, not silently ignored.
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class MacLink(_Strict):
+    brain_url: Annotated[str, Field(pattern=r"^wss?://")]
+    token_file: Path
+    heartbeat_s: Seconds = 2.0  # how often to check the link is alive
+    timeout_s: Seconds = 10.0  # this long with no reply means the link is dead
+    reconnect_max_s: Seconds = 10.0  # longest wait between reconnect attempts
+
+
+class BrainLink(_Strict):
+    listen_host: str = "0.0.0.0"
+    listen_port: Annotated[int, Field(ge=1, le=65535)] = 8765
+    token_file: Path
+    heartbeat_s: Seconds = 2.0
+    timeout_s: Seconds = 10.0
+
+
+class MacConfig(_Strict):
+    role: Literal["mac"]
+    machine: MachineName
+    state_dir: Path
+    link: MacLink
+
+
+class BrainConfig(_Strict):
+    role: Literal["brain"]
+    machine: MachineName
+    state_dir: Path
+    link: BrainLink
+
+
+Config = MacConfig | BrainConfig
+
+
+def _resolve(value: str, base: Path) -> str:
+    # "~" is the home folder; a relative path is relative to the config file,
+    # so the same config works whatever folder Jason is started from.
+    path = Path(value).expanduser()
+    return str(path if path.is_absolute() else (base / path).resolve())
+
+
+def load_config(path: Path, role: Literal["mac", "brain"]) -> Config:
+    """Load and validate a config file, checking it is for the expected role."""
+    path = Path(path)
+    with open(path, "rb") as f:
+        raw = tomllib.load(f)
+    if raw.get("role") != role:
+        raise ValueError(f"{path} is a config for role {raw.get('role')!r}, not {role!r}")
+    base = path.parent
+    if "state_dir" in raw:
+        raw["state_dir"] = _resolve(raw["state_dir"], base)
+    link = raw.get("link", {})
+    if "token_file" in link:
+        link["token_file"] = _resolve(link["token_file"], base)
+    model = MacConfig if role == "mac" else BrainConfig
+    return model.model_validate(raw)
+
+
+class TokenError(Exception):
+    pass
+
+
+def load_token(token_file: Path) -> str:
+    """The link token: JASON_LINK_TOKEN if set, otherwise the token file."""
+    token = os.environ.get(TOKEN_ENV, "").strip()
+    if not token:
+        try:
+            token = Path(token_file).read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            raise TokenError(
+                f"no link token at {token_file}. Run `jason gen-token` on one machine, "
+                f"then copy the same token to the other (or set {TOKEN_ENV})."
+            ) from None
+    if len(token) < _MIN_TOKEN_CHARS:
+        raise TokenError(f"link token is too short ({len(token)} chars, need {_MIN_TOKEN_CHARS}+)")
+    return token
+
+
+def generate_token(token_file: Path, overwrite: bool = False) -> str:
+    """Write a new random token to token_file and return it.
+
+    Refuses to replace an existing token unless overwrite=True, because the
+    other machine would stop being able to connect until it gets the new one.
+    """
+    token_file = Path(token_file).expanduser()
+    if token_file.exists() and not overwrite:
+        raise FileExistsError(f"{token_file} already exists; pass overwrite=True to replace it")
+    token = secrets.token_hex(32)  # 32 random bytes = 64 hex characters
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    # Created readable by the owner only (0600) from the first byte, so there is
+    # no moment where other users could read it. Windows ignores the mode.
+    fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(token + "\n")
+    return token

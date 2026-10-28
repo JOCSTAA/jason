@@ -1,0 +1,14 @@
+# Config for `jason run --role brain`, as it runs inside the brain's container.
+# The container mounts the host's state folder at /state and the token at
+# /secrets/link_token (set up in compose.yaml, step 12).
+
+role = "brain"
+machine = "brain"
+state_dir = "/state"
+
+[link]
+listen_host = "0.0.0.0"                # accept connections on every network interface
+listen_port = 8765
+token_file = "/secrets/link_token"
+heartbeat_s = 2.0
+timeout_s = 10.0
