@@ -1,12 +1,14 @@
 # Jason — Design Doc
 
-_Last updated: 2026-10-29 (v2.5: added §16 Relevant docs)_
+_Last updated: 2026-10-29 (v2.6: live model is the 4B in bf16, trained nightly with LoRA and merged; see `spikes/m0-lora-training.md`)_
 
 Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
 - `stack-survey.md` — plain-language technology options: recommended choice + alternatives with pros/cons
 - `old-repos-review.md` — detailed review of the archived repos
 - `spikes/m0-llm-serving.md` — performance comparison and decision for the serving engine
+- `spikes/m0-lora-training.md` — whether the live model can train on the 4090, and the merged nightly cycle
+- `spikes/m0-link-latency.md` — Mac↔brain round trips over Tailscale (1,000 pings)
 
 **Status legend used in this doc:**
 - **[Decided]** — recorded in `decisions.md`.
@@ -39,7 +41,7 @@ This is a personal passion project. The measure of success is how capable, adapt
 ### 3.1 The daily cycle [Decided]
 
 ```
-WAKE  ─► load wake-up briefing (summary of long-term memory) + latest policy + latest LoRA adapter
+WAKE  ─► load wake-up briefing (summary of long-term memory) + latest policy + latest merged weights (base + LoRA)
   │
 DAY   ─► live loop: hear → decide (silent / backchannel / respond / interject / ask / think) → speak
   │      fast learning: policy updates per reaction; short-term memory updated per interaction;
@@ -54,7 +56,7 @@ SLEEP ─► 1 consolidate memory  2 train Wonder  3 test Wonder  4 dream (if Wo
 ```
  MAC (M5 Air) — ears, mouth, dev                 WINDOWS (RTX 4090 Laptop, 16 GB) — brain, gym
  ┌──────────────────────────────────┐            ┌─────────────────────────────────────────┐
- │ Mic / speaker + echo cancellation│            │ LLM server (local, LoRA hot-swap)       │
+ │ Mic / speaker + echo cancellation│            │ LLM server (local, merged nightly)      │
  │ VAD + turn detection             │  LAN       │ Wonder (user/world simulator)           │
  │ Streaming STT, TTS               │◄─events───►│ Memory store (raw log, ST, LT, index)   │
  │ Floor controller (RL policy)     │            │ Learner (policy updates)                │
@@ -71,7 +73,7 @@ SLEEP ─► 1 consolidate memory  2 train Wonder  3 test Wonder  4 dream (if Wo
 
 ### 3.3 Models
 
-Every model in the agent, where it runs, what it does, and how (or whether) it is trained. The 9B LLM fills several roles, so there are fewer models than components.
+Every model in the agent, where it runs, what it does, and how (or whether) it is trained. The live LLM (the 4B) fills several roles, so there are fewer models than components.
 
 | # | Model | Runs on | Job | How it is trained / updated | Status |
 |---|---|---|---|---|---|
@@ -80,17 +82,17 @@ Every model in the agent, where it runs, what it does, and how (or whether) it i
 | 3 | **Parakeet TDT 0.6B** | Mac | Streaming speech-to-text | Pretrained; frozen | Recommended (§11) |
 | 4 | **Kokoro-82M** | Mac | Text-to-speech | Pretrained; frozen. Later swap to Chatterbox or Cartesia | Recommended (§11) |
 | 5 | **Floor-controller policy** (contextual bandit; small actor-critic later) | Acts on the Mac; learner on Windows | Chooses silent / backchannel / respond / interject / ask / `think()` | Starts rule-based. Then learned from scratch: **updated live after each attributed reward**; retrained during sleep on real replay (plus dreams from M9); behind the frozen/learner swap and eval gate. Validated on the simulated user first | Approach [Decided]; library [Open] (Vowpal Wabbit or small PyTorch) |
-| 6 | **Qwen3.5-9B (4-bit) + one LoRA adapter** | Windows 4090 | Main LLM: generates what Jason says. Also the default host for models 7 and 9 until they get their own | Base weights frozen. **Only the LoRA trains, during sleep**: context distillation + DPO on corrections, with replay; only with ≥ ~200 new labeled examples and a passed eval gate; hot-swapped next morning | [Decided]; served by vLLM, 4-bit AWQ |
-| 7 | **Reaction judge** | Windows (if local) | Classifies each user utterance: is it feedback, which action it targets, polarity, strength (§5.3 B) | Live labels are re-scored nightly by model 10; those re-scored labels can later train a dedicated small classifier | [Open] (needed by M3): the 9B with a prompt, or a small separate classifier |
+| 6 | **Qwen3.5-4B (bf16) + one LoRA, merged nightly** | Windows 4090 | Main LLM: generates what Jason says. Also the default host for models 7 and 9 until they get their own | Base weights frozen. **Only the LoRA trains, during sleep**: context distillation + DPO on corrections, with replay; only with ≥ ~200 new labeled examples and a passed eval gate; merged into the weights and served from them next morning (no LoRA at serving time) | [Decided]; served by vLLM, bf16 |
+| 7 | **Reaction judge** | Windows (if local) | Classifies each user utterance: is it feedback, which action it targets, polarity, strength (§5.3 B) | Live labels are re-scored nightly by model 10; those re-scored labels can later train a dedicated small classifier | [Open] (needed by M3): the live LLM with a prompt, or a small separate classifier |
 | 8 | **Embedding model** | Windows | Turns memory entries and queries into vectors for long-term memory search (§8.4) | Pretrained; frozen. Changing it means re-embedding the whole store | [Open] (needed by M2) |
-| 9 | **Wonder** (user simulator) | Windows 4090 | Predicts the user's next utterance and reaction; used for curiosity, `think()` and dreaming (§6) | M3–M6: the 9B with a "predict the user" prompt, no training (predict-and-log only). From M7: **trained nightly** on (context, action → next user turn, reaction) pairs from the raw log; enabled for `think()` only once it beats a baseline | [Open] (M7): prompt on the 9B, own LoRA on the 9B, or a separate 2–4B model |
+| 9 | **Wonder** (user simulator) | Windows 4090 | Predicts the user's next utterance and reaction; used for curiosity, `think()` and dreaming (§6) | M3–M6: the live LLM with a "predict the user" prompt, no training (predict-and-log only). From M7: **trained nightly** on (context, action → next user turn, reaction) pairs from the raw log; enabled for `think()` only once it beats a baseline | [Open] (M7): prompt on the live LLM, its own LoRA, or a separate small model |
 | 10 | **Hosted frontier model** (Claude / GPT / Gemini) | Cloud, sleep only | Re-scores the day's rewards, rewrites prompts (GEPA), writes corrected replies for DPO | Not trained; used as a tool | Recommended (§11); provider [Open] (needed by M6) |
 
 Not counted: echo cancellation (WebRTC AEC / macOS voice-processing I/O) is signal processing, not a learned model.
 
-**What actually learns from experience:** the floor-controller policy (live, every reaction), the LoRA on the 9B (nightly), and Wonder once it trains (nightly, from M7). Everything else is frozen.
+**What actually learns from experience:** the floor-controller policy (live, every reaction), the LoRA on the live LLM (nightly, merged into its weights), and Wonder once it trains (nightly, from M7). Everything else is frozen.
 
-**GPU budget note:** models 6, 8, and models 7 and 9 when they run on the 9B, all share the 4090's 16 GB by day. Live replies must take priority over judging and Wonder logging.
+**GPU budget note:** models 6, 8, and models 7 and 9 when they run on the live LLM, all share the 4090's 16 GB by day. Live replies must take priority over judging and Wonder logging.
 
 ### 3.4 Portability: cloud brain [Decided]
 
@@ -103,7 +105,7 @@ The Windows laptop may later be replaced or supplemented by a rented cloud GPU f
 | More training power (bigger LoRA runs, GRPO, larger Wonder) | Keep serving on Windows; rent a cloud GPU only for the nightly sleep job (Stack C in `stack-survey.md`) | Low: sleep is already a separate batch pipeline | No |
 | Bigger live model (e.g. ~27B+) | Move serving, and likely the whole brain, to an always-on cloud GPU | Medium | Yes: reverses "live LLM runs locally on the 4090" and "Windows is the always-on server" |
 
-**What changes in the cloud:** network round trip rises from ~5 ms to ~20–80 ms (still within the §10 budget, but it eats into `think()`); transcripts, memory and rewards cross the internet, so the link needs encryption and authentication; rented GPU machines are often temporary, so Jason's state must live on persistent storage; and Jason depends on the internet by day, not only at night.
+**What changes in the cloud:** network round trip rises from ~10 ms (measured at home over Tailscale) to ~20–80 ms (still within the §10 budget, but it eats into `think()`); transcripts, memory and rewards cross the internet, so the link needs encryption and authentication; rented GPU machines are often temporary, so Jason's state must live on persistent storage; and Jason depends on the internet by day, not only at night.
 
 **M0 portability rules** (cheap now, expensive to retrofit):
 1. The brain's address is configuration; nothing assumes the LAN or Windows paths.
@@ -112,6 +114,8 @@ The Windows laptop may later be replaced or supplemented by a rented cloud GPU f
 4. All of Jason's state (memory, raw log, adapters, policy versions) lives in one versioned location that can be synced or moved.
 5. Serving and sleep jobs are separate processes, so either can move on its own.
 6. Network round-trip time is logged as its own latency stage.
+
+**Reminder before the brain leaves the home network** (travel or cloud): restrict port 8765 to Tailscale. Today Docker's firewall rules open it to the home LAN, and only the link token protects it.
 
 ---
 
@@ -310,7 +314,7 @@ Neutral but important facts (no reaction) are protected by the use and explicit-
 - Full-duplex speech-to-speech models (PersonaPlex/Moshi) are not used for now: no text-level hooks for memory and learning. Revisit if that changes.
 
 ## 10. Conversation requirements
-- Target under ~1 s to first audio. Expected budget: turn decision 200–300 ms + STT 50–100 ms + LLM first token 100–200 ms + TTS first chunk 50–200 ms + LAN ~5 ms ≈ 0.5–0.8 s.
+- Target under ~1 s to first audio. Expected budget: turn decision 200–300 ms + STT 50–100 ms + LLM first token 100–200 ms + TTS first chunk 50–200 ms + network ~10 ms median, ~45 ms p99 (measured over Tailscale, `spikes/m0-link-latency.md`) ≈ 0.5–0.8 s.
 - Can be interrupted (barge-in).
 - Per-stage latency logged from day one.
 
@@ -323,7 +327,7 @@ Neutral but important facts (no reaction) are protected by the use and explicit-
 | Component | Recommended | Main alternative | Choice |
 |---|---|---|---|
 | Language / runtime | Python 3.12, own asyncio core | Pipecat as main framework | **Own asyncio core from day one; borrow Pipecat components only if needed** |
-| Live LLM | Qwen3.5-9B, 4-bit, vLLM or llama.cpp server with LoRA hot-swap (Windows) | Gemma 4 12B; hosted LLM (Stack B) | **Local, Qwen3.5-9B (4-bit AWQ) on the 4090, served by vLLM v0.32.0** |
+| Live LLM | Qwen3.5-9B, 4-bit, vLLM or llama.cpp server with LoRA hot-swap (Windows) | Gemma 4 12B; hosted LLM (Stack B) | **Local, Qwen3.5-4B (bf16) on the 4090, served by vLLM v0.32.0; nightly LoRA merged into the weights** |
 | Night-time helper | Hosted frontier API (judge, reflection, rewrites) | Local only | |
 | RL policy | Contextual bandit (Vowpal Wabbit or small PyTorch) | Actor-critic via CleanRL/SB3 later | |
 | Weight training | Unsloth + TRL (LoRA, DPO, context distillation) | — | |
@@ -391,9 +395,13 @@ Resolved 2026-10-27: core learning/Wonder/memory/turn-taking design; live LLM ru
 
 Resolved 2026-10-29: serving engine is vLLM (measured against llama.cpp in `docs/spikes/m0-llm-serving.md`; revisit if GPU memory becomes the limit in M2–M3).
 
+Resolved 2026-10-29 (training spike): the live model is the 4B in bf16, trained nightly with a bf16 LoRA and merged into its weights; the 9B returns only with a rented GPU (`docs/spikes/m0-lora-training.md`).
+
 Can wait:
 - Embedding model for long-term memory search (needed by M2; §3.3 model 8).
-- Reaction-judge model: the 9B with a prompt vs. a small separate classifier (needed by M3; §3.3 model 7).
+- Where the brain's database files live (needed by M2): a WSL2 volume measured about 15× faster for bulk writes and 100× faster for reads than the `C:\` mount (`docs/spikes/m0-lora-training.md`).
+- Nightly LoRA shape (M8): a fresh adapter on yesterday's merged weights, or one evolving adapter on the fixed base, re-merged nightly.
+- Reaction-judge model: the live LLM with a prompt vs. a small separate classifier (needed by M3; §3.3 model 7).
 - First learned behavior (needed by M4; proposed `ask` vs. not).
 - Hosted API provider and monthly cap for night jobs (needed by M6).
 - Sleep schedule and idle triggers (M6).
