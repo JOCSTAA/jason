@@ -1,6 +1,6 @@
 # Jason — Design Doc
 
-_Last updated: 2026-10-29 (v2.4: serving engine decided: vLLM; see `docs/spikes/m0-llm-serving.md`)_
+_Last updated: 2026-10-29 (v2.5: added §16 Relevant docs)_
 
 Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
@@ -434,3 +434,12 @@ Reviewed 2026-10-27: `JOCSTAA/AI` (2022–23; the unmerged `transformers` branch
 5. Learning is asynchronous to conversation; silence is an explicit action; handle self-hearing.
 6. Use tested RL implementations, not hand ports. Validate learning loops on a small known-reward setup before going live.
 7. One entry point, pinned cross-platform environment, final work on `main`.
+
+---
+
+## 16. Relevant docs
+
+### M0 docs
+- **Field guide:** [Jason M0 Field Guide](https://claude.ai/artifact/HXBNsBHAPb977sAUr4WVni)
+- **Handbook:** [Jason M0 Handbook](https://claude.ai/artifact/J5moMxUAgeEXWxVPFYwCbv)
+- **Implementation doc:** [Jason M0: Project skeleton, event bus and logging](https://docs.google.com/document/d/11cAp3TL_fMorMZKkgWSLmoUKQTEjG0fYo3Esg6Ux9do/edit?tab=t.0)
