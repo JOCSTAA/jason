@@ -6,6 +6,7 @@ Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
 - `stack-survey.md` — plain-language technology options: recommended choice + alternatives with pros/cons
 - `old-repos-review.md` — detailed review of the archived repos
+- `spikes/m0-llm-serving.md` — performance comparison and decision for the serving engine
 
 **Status legend used in this doc:**
 - **[Decided]** — recorded in `decisions.md`.

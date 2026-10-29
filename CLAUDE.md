@@ -11,6 +11,7 @@ A voice agent that learns and grows in real time. Core priorities, in order:
 - Decision log: @docs/decisions.md
 - Survey of current stack: @docs/stack-survey.md
 - Review of old work: @docs/old-repos-review.md
+- Serving engine decision: @docs/spikes/m0-llm-serving.md
 
 ## Architecture and layout
 Two roles, one Python package (`jason/`). The **Mac** role runs audio and the floor controller; the **brain** role (Windows RTX 4090 today, possibly a cloud GPU later; runs in Docker) runs the LLM, memory, learner and sleep. Each machine has an in-process **event bus**; every event published on it is written to that machine's **raw log**, and a **WebSocket link** (over Tailscale, token-authenticated) carries events between the two buses.
