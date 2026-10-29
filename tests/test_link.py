@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import socket
 from pathlib import Path
 
 import pytest
@@ -38,9 +39,9 @@ def system_kinds(tmp_path, machine):
     return [e.payload.kind for e in logged(tmp_path, machine) if e.type == "system"]
 
 
-async def start_brain(tmp_path, port=0):
+async def start_brain(tmp_path, port=0, session=SESSION):
     rawlog = RawLog(tmp_path / "brain-state", "brain")
-    bus = EventBus("brain", rawlog, session_id=SESSION)
+    bus = EventBus("brain", rawlog, session_id=session)
     cfg = BrainLink(listen_host="127.0.0.1", listen_port=port, token_file=Path("unused"), **FAST)
     server = LinkServer(bus, cfg, TOKEN)
     await server.start()
@@ -53,7 +54,7 @@ async def stop_brain(server, rawlog):
     rawlog.close()
 
 
-def make_client(tmp_path, port, token=TOKEN, machine="mac"):
+def make_client(tmp_path, port, token=TOKEN, machine="mac", outbox_size=1000):
     rawlog = RawLog(tmp_path / f"{machine}-state", machine)
     bus = EventBus(machine, rawlog)  # no session: the brain provides it
     cfg = MacLink(
@@ -63,7 +64,7 @@ def make_client(tmp_path, port, token=TOKEN, machine="mac"):
         clock_sync_s=0.05,
         **FAST,
     )
-    return LinkClient(bus, cfg, token), rawlog
+    return LinkClient(bus, cfg, token, outbox_size=outbox_size), rawlog
 
 
 def raw_connect(port, token=TOKEN):
@@ -288,3 +289,93 @@ async def test_brain_answers_a_sync_probe(brain):
                 break
         assert reply.t1_ns == 123
         assert reply.t2_ns <= reply.t3_ns
+
+
+# --- schema 2: late events and gaps across a network blip -------------------------
+
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+async def blip_down(server):
+    """The brain stops accepting connections but keeps running (a network blip)."""
+    server._server.close()
+    await server._server.wait_closed()
+
+
+async def run_client(client):
+    task = asyncio.create_task(client.run())
+    await asyncio.wait_for(client.ready.wait(), 3)
+    return task
+
+
+async def stop_client(client, task, rawlog):
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    client.bus.close()
+    rawlog.close()
+
+
+def brain_file(tmp_path, session):
+    return tmp_path / "brain-state" / "rawlog" / "brain" / f"{session}.jsonl"
+
+
+async def test_mac_events_from_before_a_new_day_land_in_the_new_days_file(tmp_path):
+    day2 = "day-0002_2026-10-29"
+    server, brain_log = await start_brain(tmp_path, port=free_port())
+    client, mac_log = make_client(tmp_path, server.port)
+    task = await run_client(client)
+    pings = server.bus.subscribe(ev.Ping)
+
+    await blip_down(server)
+    await eventually(lambda: not client.connected.is_set())
+    await server.set_session(day2)  # a new day starts while the Mac can't hear it
+    day1_before = brain_file(tmp_path, SESSION).read_bytes()
+    late = [client.bus.emit(ev.Ping, ev.PingPayload(seq=i)) for i in range(3)]
+    assert {e.session_id for e in late} == {SESSION}
+
+    await server.start()  # the blip ends; the Mac reconnects and sends its backlog
+    for _ in late:
+        await asyncio.wait_for(pings.get(), 5)
+
+    assert brain_file(tmp_path, SESSION).read_bytes() == day1_before
+    in_day2 = {e.id: e for e in read_events(brain_file(tmp_path, day2))}
+    assert all(in_day2[e.id].session_id == SESSION for e in late)
+
+    await stop_client(client, task, mac_log)
+    await stop_brain(server, brain_log)
+
+
+async def test_outbox_overflow_is_reported_by_both_sides(tmp_path):
+    server, brain_log = await start_brain(tmp_path, port=free_port())
+    client, mac_log = make_client(tmp_path, server.port, outbox_size=3)
+    task = await run_client(client)
+    first = client.bus.emit(ev.Ping, ev.PingPayload(seq=0))
+    await eventually(lambda: any(e.id == first.id for e in logged(tmp_path, "brain")))
+
+    await blip_down(server)
+    await eventually(lambda: not client.connected.is_set())
+    for i in range(10):  # far more than the outbox holds
+        client.bus.emit(ev.Ping, ev.PingPayload(seq=i + 1))
+
+    await server.start()
+    await eventually(lambda: "link_gap" in system_kinds(tmp_path, "brain"), timeout=5)
+    await eventually(lambda: "link_backlog_dropped" in system_kinds(tmp_path, "brain"), timeout=5)
+
+    events = logged(tmp_path, "brain")
+    gaps = [e.payload.data for e in events if e.type == "system" and e.payload.kind == "link_gap"]
+    reported = [e.payload.data for e in events if e.type == "system" and e.payload.kind == "link_backlog_dropped"]
+    total_dropped = client._bridge._outbox.dropped
+    assert total_dropped >= 8
+    # The brain's view (gaps in seq) matches exactly what the Mac's outbox dropped.
+    assert sum(g["missing"] for g in gaps) == total_dropped
+    assert all(g["machine"] == "mac" and g["run_id"] == client.bus.run_id for g in gaps)
+    # The Mac's own report can trail by the drops its report itself caused.
+    assert 0 < reported[0]["count"] <= total_dropped
+
+    await stop_client(client, task, mac_log)
+    await stop_brain(server, brain_log)

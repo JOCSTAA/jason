@@ -7,6 +7,9 @@ session, and a session is one of Jason's days, from waking to sleep (design
 
     <state_dir>/rawlog/<machine>/<session_id>.jsonl
 
+Each file holds everything this machine saw during that session, including
+late events that were created during an earlier one.
+
 Restarting Jason mid-session appends to the same file. Files are only ever
 opened for appending, so existing lines are never rewritten or truncated.
 """
@@ -45,13 +48,20 @@ class RawLog:
         _check_safe("session id", session_id)
         return self.dir / f"{session_id}.jsonl"
 
-    def write(self, event: Event) -> None:
-        if event.session_id != self._session:
-            path = self.path_for(event.session_id)
+    def write(self, event: Event, session_id: str | None = None) -> None:
+        """Append the event to the file of `session_id` (default: the event's own).
+
+        The bus passes its CURRENT session, so a late event from an earlier day
+        lands in today's file and a finished day's file is never reopened; the
+        event keeps its original session_id field.
+        """
+        session = session_id or event.session_id
+        if session != self._session:
+            path = self.path_for(session)
             self.close()
             # "ab": append-only, binary so line endings are "\n" on every OS.
             self._file = open(path, "ab")
-            self._session = event.session_id
+            self._session = session
         assert self._file is not None
         self._file.write(to_json(event).encode("utf-8") + b"\n")
         self._file.flush()

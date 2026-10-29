@@ -98,23 +98,32 @@ def _system(bus: EventBus, kind: str, message: str = "", **data: str | int | flo
 class _Bridge:
     """The part both sides share: forward this machine's events, publish the peer's."""
 
-    def __init__(self, bus: EventBus) -> None:
+    def __init__(self, bus: EventBus, outbox_size: int = 1000) -> None:
         self.bus = bus
-        # Every event on this bus. Also the waiting area while disconnected.
-        self._outbox = bus.subscribe()
+        # This machine's own events only (the other machine's are never sent
+        # back). Also the waiting area while disconnected: when it is full the
+        # oldest are dropped, counted in self._outbox.dropped.
+        self._outbox = bus.subscribe(maxsize=outbox_size, where=lambda e: e.machine == bus.machine)
+        self._reported_drops = 0
         # An event taken from the outbox whose send failed; sent first next time.
         self._pending: ev.Event | None = None
+        # Last seq received per (machine, run_id), to spot gaps.
+        self._last_seq: dict[tuple[str, str], int] = {}
+
+    def report_drops(self) -> None:
+        """Log how many of this machine's events the outbox dropped since the last report."""
+        dropped = self._outbox.dropped - self._reported_drops
+        if dropped:
+            self._reported_drops = self._outbox.dropped
+            _system(self.bus, "link_backlog_dropped", "outbox full while disconnected", count=dropped)
 
     async def pump_out(self, ws: ClientConnection | ServerConnection) -> None:
         while True:
             if self._pending is None:
                 try:
-                    event = await self._outbox.get()
+                    self._pending = await self._outbox.get()
                 except StopAsyncIteration:
                     return  # the bus is shutting down
-                if event.machine != self.bus.machine:
-                    continue  # came from the other side: don't send it back
-                self._pending = event
             await ws.send(encode(EventMsg(event=self._pending)))
             self._pending = None
 
@@ -122,7 +131,29 @@ class _Bridge:
         if event.machine == self.bus.machine:
             log.warning("dropped an incoming event that claims to be from this machine: %s", event.id)
             return
+        self._check_seq(event)
         self.bus.publish(event)
+
+    def _check_seq(self, event: ev.Event) -> None:
+        # A jump in seq within one run = events the other machine published that
+        # never arrived. The first event seen from a run isn't checked: this side
+        # may have restarted and can't know what it saw before.
+        if event.seq is None or event.run_id is None:
+            return
+        key = (event.machine, event.run_id)
+        last = self._last_seq.get(key)
+        if last is not None and event.seq > last + 1:
+            _system(
+                self.bus,
+                "link_gap",
+                f"{event.seq - last - 1} events from {event.machine} never arrived",
+                machine=event.machine,
+                run_id=event.run_id,
+                expected=last + 1,
+                got=event.seq,
+                missing=event.seq - last - 1,
+            )
+        self._last_seq[key] = max(event.seq, last if last is not None else event.seq)
 
     def close(self) -> None:
         self._outbox.close()
@@ -148,13 +179,14 @@ class LinkServer:
         cfg: BrainLink,
         token: str,
         commands: Mapping[str, Callable[[], Awaitable[str]]] | None = None,
+        outbox_size: int = 1000,
     ) -> None:
         self.bus = bus
         self.cfg = cfg
         self._expected = auth_header(token).encode()
         # Admin commands by name; each returns a message for the user.
         self._commands = dict(commands or {})
-        self._bridge = _Bridge(bus)
+        self._bridge = _Bridge(bus, outbox_size)
         self._server: Server | None = None
         self._ws: ServerConnection | None = None  # the Mac currently connected
         self._latest: ServerConnection | None = None  # the newest connection to arrive
@@ -242,6 +274,7 @@ class LinkServer:
         assert self.bus.session_id is not None, "the brain needs a session before accepting the Mac"
         await ws.send(encode(Hello(machine=self.bus.machine, session_id=self.bus.session_id)))
         _system(self.bus, "link_up", peer=str(ws.remote_address))
+        self._bridge.report_drops()
         pump = asyncio.create_task(self._bridge.pump_out(ws))
         reason = "closed"
         try:
@@ -270,11 +303,11 @@ class LinkServer:
 class LinkClient:
     """Runs on the Mac. Connects to the brain and keeps reconnecting until stopped."""
 
-    def __init__(self, bus: EventBus, cfg: MacLink, token: str) -> None:
+    def __init__(self, bus: EventBus, cfg: MacLink, token: str, outbox_size: int = 1000) -> None:
         self.bus = bus
         self.cfg = cfg
         self._token = token
-        self._bridge = _Bridge(bus)
+        self._bridge = _Bridge(bus, outbox_size)
         # Set once the brain has told us the session, i.e. once emit() works.
         self.ready = asyncio.Event()
         self.connected = asyncio.Event()
@@ -335,6 +368,7 @@ class LinkClient:
     async def _serve(self, ws: ClientConnection) -> None:
         self.connected.set()
         _system(self.bus, "link_up", peer=self.cfg.brain_url)
+        self._bridge.report_drops()
         # A new connection may mean the brain rebooted, which resets its clock.
         self.clocksync.reset()
         self._logged_offset = None

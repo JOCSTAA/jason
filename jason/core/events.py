@@ -7,17 +7,23 @@ re-scored later.
 
 Payloads are stubs sized for M0; later milestones add fields. Any change to a
 payload's meaning bumps SCHEMA_VERSION so old log lines stay interpretable.
+
+Version history:
+  1  M0.
+  2  Envelope gains seq and run_id (stamped by the bus); agent_action gains the
+     required action_probs.
 """
 
+import math
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from uuid import uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from jason.core import clock
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class _Frozen(BaseModel):
@@ -40,6 +46,13 @@ class Event(_Frozen):
     ts_wall: AwareDatetime = Field(default_factory=clock.wall_now)
     machine: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
+    # Stamped by the producing machine's bus when the event is published (never
+    # set them yourself): seq counts 0, 1, 2, ... within one run, and run_id is
+    # random per process start. A jump in seq on the receiving side means events
+    # were lost on the way. None on events that were never published, and in
+    # schema-1 logs.
+    seq: int | None = Field(default=None, ge=0)
+    run_id: str | None = None
     payload: Payload
 
 
@@ -77,10 +90,24 @@ class TurnEndProbPayload(Payload):
 
 class AgentActionPayload(Payload):
     action: Action
+    # The probability the policy gave each action when it chose; actions left
+    # out had probability 0, so a deterministic rule logs {action: 1.0}.
+    # Off-policy evaluation and unbiased retraining from logs (M4, sleep) need
+    # the chosen action's probability; the rest of the distribution helps too.
+    action_probs: dict[Action, Probability]
     policy_version: str | None = None
     # Inputs the policy saw when it chose. Logged with every decision so the
     # learner can replay "what did it know, what did it do, what happened".
     features: dict[str, float] = {}
+
+    @model_validator(mode="after")
+    def _probs_are_a_distribution(self) -> Self:
+        if self.action_probs.get(self.action, 0.0) <= 0.0:
+            raise ValueError(f"action_probs gives the chosen action {self.action!r} no probability")
+        total = sum(self.action_probs.values())
+        if not math.isclose(total, 1.0, abs_tol=1e-3):
+            raise ValueError(f"action_probs sum to {total:.4f}, not 1")
+        return self
 
 
 class AgentUtterancePayload(Payload):

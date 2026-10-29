@@ -14,7 +14,10 @@ SAMPLES: list[ev.Event] = [
     ev.AgentAction(
         **ENV,
         payload=ev.AgentActionPayload(
-            action=ev.Action.ASK, policy_version="rules-0", features={"pause_ms": 640.0}
+            action=ev.Action.ASK,
+            action_probs={ev.Action.ASK: 0.7, ev.Action.SILENT: 0.2, ev.Action.RESPOND: 0.1},
+            policy_version="rules-0",
+            features={"pause_ms": 640.0},
         ),
     ),
     ev.AgentUtterance(**ENV, payload=ev.AgentUtterancePayload(action_id="a1", text="Why?")),
@@ -114,3 +117,65 @@ def test_payload_must_match_type():
 def test_empty_machine_rejected():
     with pytest.raises(ValidationError):
         ev.Ping(machine="", session_id="s", payload=ev.PingPayload(seq=1))
+
+
+# --- schema 2 -------------------------------------------------------------------
+
+
+def test_schema_version_is_2():
+    assert ev.SCHEMA_VERSION == 2
+
+
+def test_seq_and_run_id_default_to_none_and_round_trip():
+    e = ev.Ping(**ENV, payload=ev.PingPayload(seq=1))
+    assert (e.seq, e.run_id) == (None, None)
+    stamped = e.model_copy(update={"seq": 41, "run_id": "r1"})
+    assert ev.from_json(ev.to_json(stamped)) == stamped
+
+
+def test_schema_1_lines_still_read():
+    line = json.loads(ev.to_json(ev.Ping(**ENV, payload=ev.PingPayload(seq=1))))
+    line["schema_version"] = 1
+    del line["seq"], line["run_id"]
+    restored = ev.from_json(json.dumps(line))
+    assert (restored.schema_version, restored.seq) == (1, None)
+
+
+def test_negative_seq_rejected():
+    with pytest.raises(ValidationError):
+        ev.Ping(**ENV, seq=-1, payload=ev.PingPayload(seq=1))
+
+
+def test_deterministic_action_probs():
+    p = ev.AgentActionPayload(action=ev.Action.SILENT, action_probs={ev.Action.SILENT: 1.0})
+    assert p.action_probs == {ev.Action.SILENT: 1.0}
+
+
+def test_action_probs_must_include_the_chosen_action():
+    with pytest.raises(ValidationError, match="no probability"):
+        ev.AgentActionPayload(action=ev.Action.ASK, action_probs={ev.Action.SILENT: 1.0})
+    with pytest.raises(ValidationError, match="no probability"):
+        ev.AgentActionPayload(action=ev.Action.ASK, action_probs={ev.Action.ASK: 0.0, ev.Action.SILENT: 1.0})
+
+
+def test_action_probs_must_sum_to_one():
+    with pytest.raises(ValidationError, match="sum to"):
+        ev.AgentActionPayload(action=ev.Action.ASK, action_probs={ev.Action.ASK: 0.5, ev.Action.SILENT: 0.3})
+    # Rounding within 0.001 is fine.
+    ev.AgentActionPayload(action=ev.Action.ASK, action_probs={ev.Action.ASK: 0.3333, ev.Action.SILENT: 0.6667})
+
+
+def test_action_probs_values_are_probabilities():
+    with pytest.raises(ValidationError):
+        ev.AgentActionPayload(action=ev.Action.ASK, action_probs={ev.Action.ASK: 1.5, ev.Action.SILENT: -0.5})
+
+
+def test_action_probs_is_required():
+    with pytest.raises(ValidationError):
+        ev.AgentActionPayload(action=ev.Action.ASK)
+
+
+def test_action_probs_keys_round_trip_as_actions():
+    e = SAMPLES[3]
+    restored = ev.from_json(ev.to_json(e))
+    assert all(isinstance(k, ev.Action) for k in restored.payload.action_probs)

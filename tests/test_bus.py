@@ -157,3 +157,53 @@ async def test_components_as_tasks(bus):
     assert reply.payload.ping_id == sent.id
     pings.close()
     await asyncio.wait_for(task, timeout=1)
+
+
+# --- schema 2: seq, run_id, current-session files -------------------------------
+
+
+async def test_publish_stamps_this_machines_events_in_order(bus, tmp_path):
+    sent = [bus.emit(ev.Ping, ev.PingPayload(seq=i)) for i in range(3)]
+    assert [e.seq for e in sent] == [0, 1, 2]
+    assert {e.run_id for e in sent} == {bus.run_id}
+    assert logged(tmp_path) == sent
+
+
+async def test_publish_returns_a_stamped_copy(bus):
+    e = ping(1)
+    published = bus.publish(e)
+    assert (e.seq, published.seq) == (None, 0)
+    assert published.id == e.id
+
+
+async def test_other_machines_events_keep_their_numbers(bus, tmp_path):
+    remote = ping(7, machine="brain").model_copy(update={"seq": 41, "run_id": "brain-run"})
+    assert bus.publish(remote) == remote
+    assert bus.emit(ev.Ping, ev.PingPayload(seq=1)).seq == 0  # our own counter is untouched
+    assert logged(tmp_path)[0] == remote
+
+
+async def test_each_bus_run_has_its_own_run_id(tmp_path):
+    with RawLog(tmp_path, "mac") as rawlog:
+        assert EventBus("mac", rawlog).run_id != EventBus("mac", rawlog).run_id
+
+
+async def test_where_filter(bus):
+    mine = bus.subscribe(where=lambda e: e.machine == bus.machine)
+    bus.publish(ping(1, machine="brain"))
+    sent = bus.emit(ev.Ping, ev.PingPayload(seq=2))
+    assert drain(mine) == [sent]
+
+
+async def test_late_event_goes_to_the_current_sessions_file(bus, tmp_path):
+    day2 = "day-0002_2026-10-29"
+    bus.emit(ev.Ping, ev.PingPayload(seq=1))
+    day1_file = tmp_path / "rawlog" / "mac" / f"{SESSION}.jsonl"
+    before = day1_file.read_bytes()
+
+    bus.session_id = day2
+    late = bus.publish(ping(2, machine="brain"))  # created during day 1, arrives on day 2
+
+    assert day1_file.read_bytes() == before  # the finished day is never reopened
+    [stored] = read_events(tmp_path / "rawlog" / "mac" / f"{day2}.jsonl")
+    assert stored == late and stored.session_id == SESSION  # its own field is kept

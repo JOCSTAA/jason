@@ -68,6 +68,7 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 ## Code conventions
 - Components are asyncio tasks that talk only through the event bus (`bus.emit` / `bus.subscribe`), never by calling each other
 - Every event type is a frozen pydantic model in `core/events.py` (`extra="forbid"`); changing a field's meaning bumps `SCHEMA_VERSION`, changing the wire format bumps `PROTOCOL_VERSION`
+- The bus stamps `seq` and `run_id` on publish: never set them yourself, and use the event `publish()`/`emit()` return
 - The raw log is append-only: never edit, rewrite or delete it
 - No hard-coded addresses, ports or paths: they belong in `config/*.toml` (design §3.4 portability rules)
 - Durations use `clock.monotonic_ns()`; wall time is for humans. Cross-machine timing goes through the clock offset
