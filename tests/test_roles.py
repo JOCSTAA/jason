@@ -12,7 +12,7 @@ from jason.core import events as ev
 from jason.core.config import BrainConfig, BrainLink, MacConfig, MacLink, generate_token
 from jason.core.state import StateStore
 from jason.log.rawlog import read_events
-from jason.mac.main import run_mac
+from jason.mac.main import percentile, run_mac, summarize
 from jason.net.admin import admin_url, send_command
 from jason.net.link import LinkAuthError
 
@@ -196,3 +196,27 @@ def test_default_configs_exist():
     assert cli.default_config("mac").exists()
     assert cli.default_config("brain").exists()
     assert cli.default_config("mac").parent == Path(cli.__file__).resolve().parent.parent / "config"
+
+
+# --- the run summary -------------------------------------------------------------
+
+
+def test_percentile_nearest_rank():
+    values = [float(v) for v in range(1, 101)]  # 1..100
+    assert percentile(values, 50) == 50
+    assert percentile(values, 99) == 99
+    assert percentile(values, 100) == 100
+    assert percentile([7.0], 99) == 7.0
+
+
+def test_summary_reports_the_tail_and_the_drift():
+    lines = summarize([1.0, 2.0, 3.0, 50.0], [10.0, 10.5, 9.0])
+    assert lines[0] == "4 pings: p50 2.00 ms, p99 50.00 ms, max 50.00 ms"
+    assert lines[1] == "brain clock offset: first +10.000 ms, last +9.000 ms, drift -1.000 ms"
+    assert summarize([1.0], []) == ["1 pings: p50 1.00 ms, p99 1.00 ms, max 1.00 ms"]
+
+
+async def test_run_mac_prints_the_summary(tmp_path, token_file, brain):
+    lines = []
+    await run_mac(mac_cfg(tmp_path, token_file, brain.port), count=3, every_s=0.05, out=lines.append)
+    assert any(line.startswith("3 pings: p50 ") for line in lines)

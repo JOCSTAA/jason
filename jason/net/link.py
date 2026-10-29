@@ -69,6 +69,9 @@ _FIRST_RETRY_S = 0.5
 ADMIN_PATH = "/admin"
 _OFFSET_LOG_CHANGE_NS = 1_000_000  # log a new offset estimate when it moves by 1 ms...
 _OFFSET_LOG_EVERY_NS = 60 * 1_000_000_000  # ...or at least once a minute
+# At most one link_rejected event per window, so a flood of bad connections
+# can't fill the raw log; the next one says how many were left out.
+REJECTED_LOG_EVERY_NS = 10 * 1_000_000_000
 
 
 class LinkAuthError(Exception):
@@ -186,6 +189,8 @@ class LinkServer:
         self._expected = auth_header(token).encode()
         # Admin commands by name; each returns a message for the user.
         self._commands = dict(commands or {})
+        self._rejected_logged_at: int | None = None
+        self._rejected_suppressed = 0
         self._bridge = _Bridge(bus, outbox_size)
         self._server: Server | None = None
         self._ws: ServerConnection | None = None  # the Mac currently connected
@@ -229,8 +234,23 @@ class LinkServer:
         # is, so the token can't be guessed one character at a time by timing.
         if hmac.compare_digest(given, self._expected):
             return None  # accept
-        _system(self.bus, "link_rejected", "bad or missing link token", peer=str(conn.remote_address))
+        self._log_rejection(str(conn.remote_address))
         return conn.respond(HTTPStatus.UNAUTHORIZED, "bad or missing link token\n")
+
+    def _log_rejection(self, peer: str) -> None:
+        now = clock.monotonic_ns()
+        if self._rejected_logged_at is not None and now - self._rejected_logged_at < REJECTED_LOG_EVERY_NS:
+            self._rejected_suppressed += 1
+            return
+        _system(
+            self.bus,
+            "link_rejected",
+            "bad or missing link token",
+            peer=peer,
+            suppressed=self._rejected_suppressed,  # rejections left out since the last event
+        )
+        self._rejected_logged_at = now
+        self._rejected_suppressed = 0
 
     async def _handle(self, ws: ServerConnection) -> None:
         if ws.request is not None and ws.request.path.rstrip("/") == ADMIN_PATH:

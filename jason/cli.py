@@ -110,9 +110,7 @@ def _run(args: argparse.Namespace) -> None:
     else:
         from jason.mac.main import run_mac
 
-        rtts = asyncio.run(_until_stopped(run_mac(cfg, count=args.count, every_s=args.every)))
-        if rtts:
-            print(f"{len(rtts)} pings, median round trip {sorted(rtts)[len(rtts) // 2]:.2f} ms")
+        asyncio.run(_until_stopped(run_mac(cfg, count=args.count, every_s=args.every)))
 
 
 def _new_day(args: argparse.Namespace) -> None:

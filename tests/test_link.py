@@ -379,3 +379,20 @@ async def test_outbox_overflow_is_reported_by_both_sides(tmp_path):
 
     await stop_client(client, task, mac_log)
     await stop_brain(server, brain_log)
+
+
+async def test_rejected_connections_are_rate_limited(tmp_path, brain, monkeypatch):
+    for _ in range(5):
+        with pytest.raises(InvalidStatus):
+            async with raw_connect(brain.port, token="w" * 64):
+                pass
+    assert system_kinds(tmp_path, "brain").count("link_rejected") == 1
+
+    monkeypatch.setattr(link_mod, "REJECTED_LOG_EVERY_NS", 0)  # the window has passed
+    with pytest.raises(InvalidStatus):
+        async with raw_connect(brain.port, token="w" * 64):
+            pass
+    rejected = [e.payload.data for e in logged(tmp_path, "brain")
+                if e.type == "system" and e.payload.kind == "link_rejected"]
+    assert len(rejected) == 2
+    assert (rejected[0]["suppressed"], rejected[1]["suppressed"]) == (0, 4)

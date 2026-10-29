@@ -7,6 +7,7 @@ microphone, speech-to-text, the floor controller and text-to-speech.
 
 import asyncio
 import contextlib
+import math
 from collections.abc import Callable
 
 from jason.core import clock
@@ -27,15 +28,40 @@ async def _pong_for(pongs: Subscription, ping_id: str) -> tuple[ev.Pong, int]:
             return pong, arrived
 
 
+def percentile(values: list[float], p: float) -> float:
+    """Nearest-rank percentile: the smallest value with at least p% of values at or below it."""
+    ordered = sorted(values)
+    return ordered[max(1, math.ceil(p / 100 * len(ordered))) - 1]
+
+
+def summarize(rtts: list[float], offsets_ms: list[float]) -> list[str]:
+    """Summary lines for a run: the round-trip tail, and how far the clock offset drifted."""
+    lines = [
+        f"{len(rtts)} pings: p50 {percentile(rtts, 50):.2f} ms, "
+        f"p99 {percentile(rtts, 99):.2f} ms, max {max(rtts):.2f} ms"
+    ]
+    if len(offsets_ms) >= 2:
+        first, last = offsets_ms[0], offsets_ms[-1]
+        lines.append(f"brain clock offset: first {first:+.3f} ms, last {last:+.3f} ms, drift {last - first:+.3f} ms")
+    return lines
+
+
 async def pinger(
     bus: EventBus,
     client: LinkClient,
     count: int | None,
     every_s: float,
     out: Callable[[str], None],
+    rtts: list[float] | None = None,
+    offsets_ms: list[float] | None = None,
 ) -> list[float]:
-    """Send pings and print each round trip. Returns the round trips in ms."""
-    rtts: list[float] = []
+    """Send pings and print each round trip. Returns the round trips in ms.
+
+    Round trips and clock-offset estimates are appended to `rtts` and
+    `offsets_ms` as they come, so the caller can summarize even if stopped.
+    """
+    rtts = [] if rtts is None else rtts
+    offsets_ms = [] if offsets_ms is None else offsets_ms
     with bus.subscribe(ev.Pong) as pongs:
         seq = 0
         while count is None or seq < count:
@@ -55,6 +81,8 @@ async def pinger(
                 ev.LatencyMarkPayload(stage="ping_rtt", duration_ns=s.rtt_ns, ref_id=ping.id),
             )
             rtts.append(s.rtt_ns / 1e6)
+            if client.clocksync.best is not None:
+                offsets_ms.append(client.clocksync.best.offset_ns / 1e6)
             out(f"ping {seq}: {s.rtt_ns / 1e6:.2f} ms round trip{_offset_note(client)}")
             if count is None or seq < count:
                 await asyncio.sleep(every_s)
@@ -84,12 +112,14 @@ async def run_mac(
         client = LinkClient(bus, cfg.link, token)
         link = asyncio.create_task(client.run())
         out(f"connecting to {cfg.link.brain_url} ...")
+        rtts: list[float] = []
+        offsets_ms: list[float] = []
 
         async def main() -> list[float]:
             await client.ready.wait()
             out(f"connected; session {bus.session_id}")
             bus.emit(ev.System, ev.SystemPayload(kind="startup", message="mac started"))
-            return await pinger(bus, client, count, every_s, out)
+            return await pinger(bus, client, count, every_s, out, rtts, offsets_ms)
 
         work = asyncio.create_task(main())
         try:
@@ -100,6 +130,10 @@ async def run_mac(
                 link.result()  # re-raises the link's error
             return work.result()
         finally:
+            # Printed on every exit, Ctrl+C included, so a long run still reports its tail.
+            if rtts:
+                for line in summarize(rtts, offsets_ms):
+                    out(line)
             if bus.session_id is not None:
                 bus.emit(ev.System, ev.SystemPayload(kind="shutdown", message="mac stopping"))
             # Give the link a moment to deliver the last events to the brain.

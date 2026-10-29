@@ -77,7 +77,7 @@ clock_sync_s = 0.5
             cwd=tmp_path, capture_output=True, text=True, timeout=120,
         )
         assert mac.returncode == 0, mac.stdout + mac.stderr
-        assert "3 pings, median round trip" in mac.stdout
+        assert "3 pings: p50 " in mac.stdout
 
         new_day = compose(env, "exec", "-T", "brain", "jason", "new-day")
         assert "started day-0002_" in new_day.stdout, new_day.stdout + new_day.stderr

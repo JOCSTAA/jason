@@ -138,7 +138,7 @@ def test_loopback_ping_pong(setup):
         mac = run_mac(tmp_path, "--count", "3", "--every", "0.2")
         assert mac.returncode == 0, mac.stdout + mac.stderr
         assert len(re.findall(r"ping \d: [\d.]+ ms round trip", mac.stdout)) == 3
-        assert "3 pings, median round trip" in mac.stdout
+        assert "3 pings: p50 " in mac.stdout
     finally:
         brain.stop()
 
@@ -170,7 +170,7 @@ def test_mac_started_first_waits_for_the_brain(setup):
     try:
         out, _ = mac.communicate(timeout=60)
         assert mac.returncode == 0, out
-        assert "1 pings, median round trip" in out
+        assert "1 pings: p50 " in out
     finally:
         brain.stop()
         if mac.poll() is None:
