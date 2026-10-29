@@ -1,0 +1,42 @@
+# M0 spike (optional baseline): llama.cpp server with Qwen3.5-9B Q4_K_M GGUF.
+# Stop the vLLM container first; both won't fit on the GPU at once.
+#
+#   docker compose -f compose.llamacpp.yaml up -d
+#   docker compose -f compose.llamacpp.yaml logs -f llamacpp
+#   docker compose -f compose.llamacpp.yaml down
+
+services:
+  llamacpp:
+    # server-cuda (CUDA 12.8, driver 570+), pinned to the build of 2026-10-29.
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:0283744a35a6e7698b4f7a2d63360233dc769ece51e84bdba7aa187a33978276
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      LLAMA_CACHE: /models
+    volumes:
+      - llama-cache:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - -hf
+      - unsloth/Qwen3.5-9B-GGUF:Q4_K_M
+      - --alias
+      - qwen3.5-9b
+      - -ngl
+      - all                     # every layer on the GPU
+      - -c
+      - "32768"                 # split across 4 slots: 8192 each, matching vLLM
+      - -np
+      - "4"
+      - -fa
+      - "on"
+      - --chat-template-kwargs
+      - '{"enable_thinking": false}'
+
+volumes:
+  llama-cache:

@@ -1,0 +1,48 @@
+# M0 spike: vLLM serving Qwen3.5-9B (4-bit AWQ) on the RTX 4090 Laptop. See README.md.
+#
+#   docker compose -f compose.vllm.yaml up -d
+#   docker compose -f compose.vllm.yaml logs -f vllm
+#   docker compose -f compose.vllm.yaml down        (the downloaded model is kept)
+
+services:
+  vllm:
+    # CUDA 13 build; needs NVIDIA driver 580+. With an older driver, set
+    # VLLM_IMAGE=vllm/vllm-openai:v0.32.0-cu129@sha256:bc0445dac61accbf1c3b17fbb524a71eee0b1b32f55ba45952095e3be8991c3f (driver 575+).
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34}
+    ports:
+      # This machine only: the runtime LoRA and sleep endpoints below must
+      # never be reachable from the network.
+      - "127.0.0.1:8000:8000"
+    environment:
+      VLLM_ALLOW_RUNTIME_LORA_UPDATING: "True"  # /v1/load_lora_adapter, /v1/unload_lora_adapter
+      VLLM_SERVER_DEV_MODE: "1"                 # /sleep, /wake_up (dev endpoints)
+      HF_TOKEN: ${HF_TOKEN:-}                   # not needed for these public models
+    volumes:
+      # A Docker volume, not a Windows folder: reading 9 GB of weights from
+      # C:\ through WSL2 is much slower.
+      - hf-cache:/root/.cache/huggingface
+      - ./adapters:/adapters:ro
+    shm_size: "8gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - cyankiwi/Qwen3.5-9B-AWQ-4bit           # community 4-bit AWQ (compressed-tensors)
+      - --served-model-name=qwen3.5-9b
+      - --language-model-only                  # skip the vision encoder: more memory for the cache
+      - --max-model-len=8192                   # Jason's prompts: briefing + recent turns
+      - --max-num-seqs=4                       # one user; leaves room for judge/Wonder calls
+      - --gpu-memory-utilization=0.80          # fraction of 16 GB vLLM may claim; Windows needs some
+      - --enable-lora
+      - --max-lora-rank=64
+      - --max-loras=2                          # tonight's adapter + yesterday's, briefly
+      - --reasoning-parser=qwen3
+      - '--default-chat-template-kwargs={"enable_thinking": false}'  # live replies: no thinking
+      - --enable-sleep-mode
+
+volumes:
+  hf-cache:
