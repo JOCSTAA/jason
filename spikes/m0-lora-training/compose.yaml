@@ -1,0 +1,70 @@
+# M0 training spike: can Jason's nightly LoRA train on the RTX 4090 Laptop, and
+# does what it learns survive serving? See README.md.
+#
+#   vllm    serves one model at a time (choose with MODEL / REVISION)
+#   train   Unsloth: trains a LoRA adapter (run with `docker compose run --rm train ...`)
+#   sqlite  SQLite write speed on the C:\ mount vs a WSL2 Docker volume
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+  vllm:
+    <<: *gpu
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34}
+    ports:
+      - "127.0.0.1:8000:8000"  # this machine only: the LoRA and sleep endpoints have no auth
+    environment:
+      VLLM_ALLOW_RUNTIME_LORA_UPDATING: "True"
+      VLLM_SERVER_DEV_MODE: "1"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+      - ./adapters:/adapters:ro
+    shm_size: "8gb"
+    command:
+      # Default: option B, the 4B in bf16 (the same weights training uses).
+      - ${MODEL:-Qwen/Qwen3.5-4B}
+      - --revision=${REVISION:-851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a}
+      - --served-model-name=jason-llm
+      - --language-model-only
+      - --max-model-len=8192
+      - --max-num-seqs=4
+      - --gpu-memory-utilization=0.80
+      - --enable-lora
+      - --max-lora-rank=64
+      - --max-loras=2
+      - --reasoning-parser=qwen3
+      - '--default-chat-template-kwargs={"enable_thinking": false}'
+      - --enable-sleep-mode
+
+  train:
+    <<: *gpu
+    # Unsloth's slim image (no web UI), pinned to the build of 2026-10-28.
+    image: unsloth/unsloth:core-nightly-2026.10.28@sha256:28a5143f4e074e0825723715a3469a30ccdc782619351fdfe4634cc7a112f6b9
+    volumes:
+      - hf-cache:/workspace/.cache/huggingface  # the same downloads vLLM uses
+      - ./:/spike
+    shm_size: "8gb"
+    profiles: [tools]  # only runs when called with `docker compose run`
+
+  sqlite:
+    image: python:3.12-slim-bookworm
+    volumes:
+      - ${JASON_DATA:-~/jason-data}/sqlite-bench:/cdrive  # Jason's data folder on C:\ (a temporary subfolder)
+      - sqlite-bench:/wsl2                                # a volume on WSL2's own disk
+      - ./:/spike:ro
+    command: ["python", "/spike/sqlite_bench.py", "/cdrive", "/wsl2"]
+    profiles: [tools]
+
+volumes:
+  # Reuses the serving spike's download cache: the 9B AWQ model is already there.
+  hf-cache:
+    external: true
+    name: m0-llm-serving_hf-cache
+  sqlite-bench:
