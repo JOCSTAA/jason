@@ -73,7 +73,15 @@ def load_config(path: Path, role: Literal["mac", "brain"]) -> Config:
     """Load and validate a config file, checking it is for the expected role."""
     path = Path(path)
     with open(path, "rb") as f:
-        raw = tomllib.load(f)
+        try:
+            raw = tomllib.load(f)
+        except tomllib.TOMLDecodeError as e:
+            # The usual cause on Windows: "C:\Users\..." in double quotes, where
+            # TOML reads \U as the start of an escape code.
+            raise ValueError(
+                f"{path} is not valid TOML ({e}). If it contains a Windows path, write it "
+                "with forward slashes (\"C:/Users/...\") or in single quotes ('C:\\Users\\...')."
+            ) from None
     if raw.get("role") != role:
         raise ValueError(f"{path} is a config for role {raw.get('role')!r}, not {role!r}")
     base = path.parent

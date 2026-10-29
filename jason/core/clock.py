@@ -8,6 +8,13 @@ Two clocks, two jobs:
 - Wall time is human-readable and roughly comparable across machines, but the
   OS can adjust it at any moment, so never subtract two wall times to measure
   latency.
+
+The monotonic clock is read with time.perf_counter_ns(), not
+time.monotonic_ns(): on Windows with Python 3.12, monotonic only ticks every
+~15.6 ms, which would make every latency under that read as 0. perf_counter
+is the high-resolution system clock everywhere (QueryPerformanceCounter on
+Windows, mach_absolute_time on macOS, CLOCK_MONOTONIC on Linux), and it is
+also monotonic.
 """
 
 import time
@@ -15,7 +22,7 @@ from datetime import datetime, timezone
 
 
 def monotonic_ns() -> int:
-    return time.monotonic_ns()
+    return time.perf_counter_ns()
 
 
 def wall_now() -> datetime:

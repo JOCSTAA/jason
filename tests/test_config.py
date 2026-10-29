@@ -54,7 +54,9 @@ def test_committed_mac_config_loads():
 def test_committed_brain_config_loads():
     cfg = load_config(REPO_CONFIG / "brain.toml", "brain")
     assert isinstance(cfg, BrainConfig)
-    assert cfg.state_dir == Path("/state")
+    # This config is for the Linux container, where it is exactly /state. Read on
+    # Windows (no drive letter), "/state" becomes C:\state; still a /state folder.
+    assert cfg.state_dir.as_posix().endswith("/state")
     assert cfg.link.listen_port == 8765
 
 
@@ -181,3 +183,15 @@ def test_token_path_that_is_a_folder_explains_the_docker_cause(tmp_path):
     folder.mkdir()  # what Docker creates when the mounted file is missing
     with pytest.raises(TokenError, match="is a folder"):
         load_token(folder)
+
+
+def test_windows_backslash_path_gets_a_helpful_error(tmp_path):
+    path = write(tmp_path, MAC_TOML.format(state_dir="C:\\Users\\me\\state", token_file="t"))
+    with pytest.raises(ValueError, match="forward slashes"):
+        load_config(path, "mac")
+
+
+def test_windows_paths_in_forward_slashes_or_single_quotes_load(tmp_path):
+    text = MAC_TOML.format(state_dir="C:/Users/me/state", token_file="t")
+    text = text.replace('token_file = "t"', "token_file = 'C:\\Users\\me\\link_token'")
+    load_config(write(tmp_path, text), "mac")

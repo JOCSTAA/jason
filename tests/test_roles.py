@@ -26,7 +26,7 @@ state_dir = "brain-state"
 [link]
 listen_host = "127.0.0.1"
 listen_port = {port}
-token_file = "{token_file}"
+token_file = "{Path(token_file).as_posix()}"
 timeout_s = 1.0
 """)
     return path
