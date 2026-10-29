@@ -1,6 +1,6 @@
 # Jason — Design Doc
 
-_Last updated: 2026-10-28 (v2.3: added §3.4 Portability: cloud brain; M0 scope updated)_
+_Last updated: 2026-10-29 (v2.4: serving engine decided: vLLM; see `docs/spikes/m0-llm-serving.md`)_
 
 Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
@@ -79,7 +79,7 @@ Every model in the agent, where it runs, what it does, and how (or whether) it i
 | 3 | **Parakeet TDT 0.6B** | Mac | Streaming speech-to-text | Pretrained; frozen | Recommended (§11) |
 | 4 | **Kokoro-82M** | Mac | Text-to-speech | Pretrained; frozen. Later swap to Chatterbox or Cartesia | Recommended (§11) |
 | 5 | **Floor-controller policy** (contextual bandit; small actor-critic later) | Acts on the Mac; learner on Windows | Chooses silent / backchannel / respond / interject / ask / `think()` | Starts rule-based. Then learned from scratch: **updated live after each attributed reward**; retrained during sleep on real replay (plus dreams from M9); behind the frozen/learner swap and eval gate. Validated on the simulated user first | Approach [Decided]; library [Open] (Vowpal Wabbit or small PyTorch) |
-| 6 | **Qwen3.5-9B (4-bit) + one LoRA adapter** | Windows 4090 | Main LLM: generates what Jason says. Also the default host for models 7 and 9 until they get their own | Base weights frozen. **Only the LoRA trains, during sleep**: context distillation + DPO on corrections, with replay; only with ≥ ~200 new labeled examples and a passed eval gate; hot-swapped next morning | [Decided] (serving engine [Open]) |
+| 6 | **Qwen3.5-9B (4-bit) + one LoRA adapter** | Windows 4090 | Main LLM: generates what Jason says. Also the default host for models 7 and 9 until they get their own | Base weights frozen. **Only the LoRA trains, during sleep**: context distillation + DPO on corrections, with replay; only with ≥ ~200 new labeled examples and a passed eval gate; hot-swapped next morning | [Decided]; served by vLLM, 4-bit AWQ |
 | 7 | **Reaction judge** | Windows (if local) | Classifies each user utterance: is it feedback, which action it targets, polarity, strength (§5.3 B) | Live labels are re-scored nightly by model 10; those re-scored labels can later train a dedicated small classifier | [Open] (needed by M3): the 9B with a prompt, or a small separate classifier |
 | 8 | **Embedding model** | Windows | Turns memory entries and queries into vectors for long-term memory search (§8.4) | Pretrained; frozen. Changing it means re-embedding the whole store | [Open] (needed by M2) |
 | 9 | **Wonder** (user simulator) | Windows 4090 | Predicts the user's next utterance and reaction; used for curiosity, `think()` and dreaming (§6) | M3–M6: the 9B with a "predict the user" prompt, no training (predict-and-log only). From M7: **trained nightly** on (context, action → next user turn, reaction) pairs from the raw log; enabled for `think()` only once it beats a baseline | [Open] (M7): prompt on the 9B, own LoRA on the 9B, or a separate 2–4B model |
@@ -322,7 +322,7 @@ Neutral but important facts (no reaction) are protected by the use and explicit-
 | Component | Recommended | Main alternative | Choice |
 |---|---|---|---|
 | Language / runtime | Python 3.12, own asyncio core | Pipecat as main framework | **Own asyncio core from day one; borrow Pipecat components only if needed** |
-| Live LLM | Qwen3.5-9B, 4-bit, vLLM or llama.cpp server with LoRA hot-swap (Windows) | Gemma 4 12B; hosted LLM (Stack B) | **Local, Qwen3.5-9B on the 4090** (serving engine open) |
+| Live LLM | Qwen3.5-9B, 4-bit, vLLM or llama.cpp server with LoRA hot-swap (Windows) | Gemma 4 12B; hosted LLM (Stack B) | **Local, Qwen3.5-9B (4-bit AWQ) on the 4090, served by vLLM v0.32.0** |
 | Night-time helper | Hosted frontier API (judge, reflection, rewrites) | Local only | |
 | RL policy | Contextual bandit (Vowpal Wabbit or small PyTorch) | Actor-critic via CleanRL/SB3 later | |
 | Weight training | Unsloth + TRL (LoRA, DPO, context distillation) | — | |
@@ -388,8 +388,7 @@ Each milestone has a measurable exit criterion.
 
 Resolved 2026-10-27: core learning/Wonder/memory/turn-taking design; live LLM runs locally; own core from day one; Windows laptop is an always-on server.
 
-Needed during M0–M1:
-- Serving engine on Windows: vLLM (needs WSL2 on Windows) vs. llama.cpp server (native). Both must load the chosen model and hot-swap LoRA. Verify Qwen3.5's architecture is supported before committing.
+Resolved 2026-10-29: serving engine is vLLM (measured against llama.cpp in `docs/spikes/m0-llm-serving.md`; revisit if GPU memory becomes the limit in M2–M3).
 
 Can wait:
 - Embedding model for long-term memory search (needed by M2; §3.3 model 8).
