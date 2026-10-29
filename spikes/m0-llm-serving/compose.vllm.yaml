@@ -32,6 +32,7 @@ services:
               capabilities: [gpu]
     command:
       - cyankiwi/Qwen3.5-9B-AWQ-4bit           # community 4-bit AWQ (compressed-tensors)
+      - --revision=e4d2d39cede8c5d1716d824cd843e2889c648083  # the upload measured on 2026-10-29
       - --served-model-name=qwen3.5-9b
       - --language-model-only                  # skip the vision encoder: more memory for the cache
       - --max-model-len=8192                   # Jason's prompts: briefing + recent turns

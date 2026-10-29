@@ -35,8 +35,8 @@ services:
       - "4"
       - -fa
       - "on"
-      - --chat-template-kwargs
-      - '{"enable_thinking": false}'
+      - --reasoning             # no thinking for live replies
+      - "off"
 
 volumes:
   llama-cache:

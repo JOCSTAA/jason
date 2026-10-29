@@ -97,7 +97,9 @@ def main() -> None:
     g = bench.gpu()
     report["gpu"] = g
     bench.RESULTS.mkdir(exist_ok=True)
-    (bench.RESULTS / "vllm-lora.json").write_text(json.dumps(report, indent=2, ensure_ascii=False))
+    # utf-8 explicitly: Windows defaults to cp1252, which can't hold the Hindi replies.
+    (bench.RESULTS / "vllm-lora.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     passed = sum(s["ok"] for s in report["steps"])
     print(f"\n=== lora_check: {passed}/{len(report['steps'])} steps ok; paste everything above ===")
 

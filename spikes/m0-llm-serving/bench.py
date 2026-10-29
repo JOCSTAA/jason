@@ -210,7 +210,7 @@ def main() -> None:
     }
     RESULTS.mkdir(exist_ok=True)
     (RESULTS / f"{args.label}-bench.json").write_text(
-        json.dumps({"summary": summary, "unique": unique, "shared": shared}, indent=2))
+        json.dumps({"summary": summary, "unique": unique, "shared": shared}, indent=2), encoding="utf-8")
 
     print(f"\n=== {args.label}: paste this block ===")
     print(f"gpu: {g['name']}, driver {g['driver']}, {g['used_mib']}/{g['total_mib']} MiB in use" if g else "gpu: nvidia-smi not available")

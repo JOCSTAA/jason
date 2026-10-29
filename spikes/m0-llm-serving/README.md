@@ -91,12 +91,19 @@ docker compose -f $C down
 The downloaded model stays in a Docker volume for next time.
 
 ## 11–13. Optional: llama.cpp baseline
+First make sure vLLM is stopped (step 10): the two servers won't both fit on the
+GPU. This should list no running containers:
+```
+docker compose -f $C ps
+```
+Then:
 ```
 $L = "spikes/m0-llm-serving/compose.llamacpp.yaml"
 docker compose -f $L up -d
 docker compose -f $L logs -f llamacpp
 ```
-Wait for **`server is listening`** (the first start downloads ~5.7 GB), then Ctrl+C and:
+The first start downloads the model (~5.7 GB), which takes several minutes and
+shows little in the log. Wait for **`server is listening`**, then Ctrl+C and:
 ```
 uv run python spikes/m0-llm-serving/bench.py --label llamacpp --url http://127.0.0.1:8080
 nvidia-smi
