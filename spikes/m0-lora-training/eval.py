@@ -44,17 +44,19 @@ def adheres(reply: str) -> bool:
     return bool(lines) and lines[-1].startswith("Curious:") and lines[-1].endswith("?")
 
 
-def ask(model: str, question: str) -> str:
+def ask(model: str, question: str) -> tuple[str, bool]:
+    """The reply, and whether it finished (didn't hit the token limit)."""
     status, body = post("/v1/chat/completions", {
         "model": model,
         "messages": [{"role": "user", "content": question}],
-        "max_tokens": 200,
+        "max_tokens": 600,
         "temperature": 0,
         "chat_template_kwargs": {"enable_thinking": False},
     })
     if status != 200:
         raise SystemExit(f"request failed: HTTP {status}: {str(body)[:300]}")
-    return body["choices"][0]["message"]["content"]
+    choice = body["choices"][0]
+    return choice["message"]["content"], choice.get("finish_reason") != "length"
 
 
 def main() -> None:
@@ -76,11 +78,16 @@ def main() -> None:
     rows = [json.loads(line) for line in open(HERE / "data" / "eval.jsonl", encoding="utf-8")]
     questions = [r["messages"][0]["content"] for r in rows]
     with ThreadPoolExecutor(max_workers=4) as pool:
-        replies = list(pool.map(lambda q: ask(model, q), questions))
+        answered = list(pool.map(lambda q: ask(model, q), questions))
+    replies = [reply for reply, _ in answered]
+    finished = [reply for reply, done in answered if done]
 
     rate = sum(adheres(r) for r in replies) / len(replies)
+    finished_rate = sum(adheres(r) for r in finished) / len(finished) if finished else None
     result = {"label": args.label, "adapter": args.adapter, "adherence": rate,
-              "replies": [{"question": q, "reply": r} for q, r in zip(questions, replies)]}
+              "finished": len(finished), "adherence_finished": finished_rate,
+              "replies": [{"question": q, "reply": r, "finished": done}
+                          for q, (r, done) in zip(questions, answered)]}
     if args.compare:
         earlier = json.loads((RESULTS / f"eval-{args.compare}.json").read_text(encoding="utf-8"))
         ratios = [difflib.SequenceMatcher(None, a["reply"], b["reply"]).ratio()
@@ -95,6 +102,10 @@ def main() -> None:
 
     print(f"\n=== eval {args.label}: paste this block ===")
     print(f"replies ending with a 'Curious: ...?' line: {sum(adheres(r) for r in replies)}/{len(replies)} ({rate:.0%})")
+    if finished_rate is not None:
+        print(f"  among the {len(finished)} replies that finished: "
+              f"{sum(adheres(r) for r in finished)}/{len(finished)} ({finished_rate:.0%})")
+    print(f"replies cut off at the 600-token limit: {len(replies) - len(finished)}")
     if args.compare:
         print(f"similarity to {args.compare}: {result['similarity_mean']} mean, "
               f"{result['identical_replies']}/{len(replies)} identical")

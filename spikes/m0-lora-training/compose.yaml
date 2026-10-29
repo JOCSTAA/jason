@@ -43,6 +43,28 @@ services:
       - '--default-chat-template-kwargs={"enable_thinking": false}'
       - --enable-sleep-mode
 
+  # Serves a merged model (base + adapter folded into the weights, made by
+  # `train.py --merge`) with no LoRA at all: how Jason would serve by day after
+  # a night's training. Choose the folder with MERGED.
+  vllm-merged:
+    <<: *gpu
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.32.0@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./merged:/merged:ro
+    shm_size: "8gb"
+    command:
+      - /merged/${MERGED:-4b-bf16-v2}
+      - --served-model-name=jason-llm
+      - --language-model-only
+      - --max-model-len=8192
+      - --max-num-seqs=4
+      - --gpu-memory-utilization=0.80
+      - --reasoning-parser=qwen3
+      - '--default-chat-template-kwargs={"enable_thinking": false}'
+    profiles: [tools]
+
   train:
     <<: *gpu
     # Unsloth's slim image (no web UI), pinned to the build of 2026-10-28.

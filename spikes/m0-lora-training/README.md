@@ -159,3 +159,61 @@ step number. Everything is also saved in `spikes/m0-lora-training/results/`.
 | Training: an error mentioning `unsloth`, `trl` or `SFTConfig` | The libraries changed; paste the error |
 | `loading the adapter failed` | Paste it, plus the last 40 lines of `docker compose -f $T logs vllm` |
 | vLLM: `No available memory for the cache blocks` | Something else holds the GPU: `docker ps`, stop it |
+
+## Follow-up: train, merge, serve the merged model (option B as Jason would run it)
+
+The first run showed two things. Most eval replies were cut off at the old
+200-token limit (counting only finished replies, 90–95% had the habit), and
+serving *through* a LoRA adapter made generation 30–60× slower. Jason doesn't
+need to serve through the adapter: he is offline during sleep (design §7), so
+the night can **merge** the adapter into the weights, and the day serves the
+merged weights with no LoRA. This run checks that, with fixed data (complete
+answers only) and a 600-token eval limit.
+
+Allow about **30 minutes** and **10 GB** of free disk (the merged model).
+
+**F1. Update and serve the base 4B:**
+```
+git pull
+$T = "spikes/m0-lora-training/compose.yaml"
+Remove-Item Env:MODEL, Env:REVISION, Env:MERGED -ErrorAction SilentlyContinue
+docker compose -f $T up -d vllm
+docker compose -f $T logs -f vllm
+```
+After `Application startup complete`, Ctrl+C.
+
+**F2. Rebuild the data with complete answers, and re-measure the base:**
+```
+uv run python spikes/m0-lora-training/make_data.py
+uv run python spikes/m0-lora-training/eval.py --label 4b-base-v2
+```
+
+**F3. Go to sleep: stop the live model, then train and merge.** Training gets
+the whole GPU, as it would at night:
+```
+docker compose -f $T down
+docker compose -f $T run --rm train python /spike/train.py --model Qwen/Qwen3.5-4B --bits 16 --name 4b-bf16-v2 --merge
+```
+The merge writes about 9 GB to `spikes\m0-lora-training\merged\4b-bf16-v2` and
+takes a few minutes after training.
+
+**F4. Wake up: serve the merged model (no LoRA) and measure it:**
+```
+docker compose -f $T --profile tools up -d vllm-merged
+docker compose -f $T logs -f vllm-merged
+```
+After `Application startup complete`, Ctrl+C, then:
+```
+uv run python spikes/m0-llm-serving/bench.py --label vllm-4b-merged --model jason-llm
+uv run python spikes/m0-lora-training/eval.py --label 4b-merged
+docker compose -f $T --profile tools down
+```
+
+**Send back:** the paste blocks from F2, F3 and F4. Afterwards you can delete
+`spikes\m0-lora-training\merged` to get the 9 GB back.
+
+| Message | What to do |
+|---|---|
+| `Bind for 127.0.0.1:8000 failed: port is already allocated` | Both servers are up: `docker compose -f $T --profile tools down`, then start the one you need |
+| Training errors in `save_pretrained_merged` | Paste it: the adapter in `adapters\4b-bf16-v2` is already saved, so only the merge needs fixing |
+| vLLM can't load `/merged/4b-bf16-v2` (an architecture or config error) | Paste the last 40 lines of `docker compose -f $T logs vllm-merged` |

@@ -66,6 +66,8 @@ def main() -> None:
     p.add_argument("--name", required=True, help="adapter folder name under adapters/")
     p.add_argument("--steps", type=int, default=60)
     p.add_argument("--seq", type=int, default=1024)
+    p.add_argument("--merge", action="store_true",
+                   help="also save the base weights with the adapter merged in, under merged/<name>")
     args = p.parse_args()
 
     import torch
@@ -129,6 +131,15 @@ def main() -> None:
     out = SPIKE / "adapters" / args.name
     model.save_pretrained(str(out))
     tokenizer.save_pretrained(str(out))
+    merge_s = merged_gb = None
+    if args.merge:
+        # Full 16-bit weights with the adapter folded in: vLLM then serves it
+        # with no LoRA at all, at the base model's speed.
+        merged = SPIKE / "merged" / args.name
+        t2 = time.monotonic()
+        model.save_pretrained_merged(str(merged), tokenizer, save_method="merged_16bit")
+        merge_s = round(time.monotonic() - t2, 1)
+        merged_gb = round(sum(f.stat().st_size for f in merged.rglob("*") if f.is_file()) / 1e9, 2)
     sampler.stop.set()
     sampler.join()
 
@@ -152,6 +163,8 @@ def main() -> None:
         "vm_ram_peak_gib": round(sampler.vm_peak_gib, 2),
         "process_ram_peak_gib": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20, 2),
         "adapter_mb": round(sum(f.stat().st_size for f in out.rglob("*") if f.is_file()) / 1e6, 1),
+        "merge_s": merge_s,
+        "merged_gb": merged_gb,
     }
     results = SPIKE / "results"
     results.mkdir(exist_ok=True)

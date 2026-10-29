@@ -6,7 +6,8 @@ does this, so after training, the share of eval replies that do is a clean
 measure of whether the lesson was learned and survived serving.
 
 Answers come from the base model itself (served by compose.yaml's vllm, with
-thinking off); the Curious line is appended. Eval topics are not in training,
+thinking off); the Curious line is appended. Answers that hit the token limit
+are dropped, so no example teaches "stop mid-sentence, then ask". Eval topics are not in training,
 so the eval tests whether the behavior generalizes. Run from the repo root:
 
     uv run python spikes/m0-lora-training/make_data.py
@@ -51,18 +52,20 @@ FOLLOW_UPS = [
 ]
 
 
-def base_answer(question: str) -> str:
+def base_answer(question: str) -> tuple[str, bool]:
+    """The base model's answer, and whether it finished (didn't hit the token limit)."""
     body = {
         "model": "jason-llm",
         "messages": [{"role": "user", "content": question}],
-        "max_tokens": 160,
+        "max_tokens": 512,
         "temperature": 0,
         "chat_template_kwargs": {"enable_thinking": False},
     }
     req = urllib.request.Request(URL, data=json.dumps(body).encode(), method="POST",
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as r:
-        return json.loads(r.read())["choices"][0]["message"]["content"].strip()
+        choice = json.loads(r.read())["choices"][0]
+    return choice["message"]["content"].strip(), choice.get("finish_reason") != "length"
 
 
 def main() -> None:
@@ -73,10 +76,15 @@ def main() -> None:
 
     out = HERE / "data"
     out.mkdir(exist_ok=True)
-    counts = {"train": 0, "eval": 0}
+    counts = {"train": 0, "eval": 0, "dropped": 0}
     with open(out / "train.jsonl", "w", encoding="utf-8") as train, \
          open(out / "eval.jsonl", "w", encoding="utf-8") as ev:
-        for (topic, i, question), answer in zip(items, answers):
+        for (topic, i, question), (answer, finished) in zip(items, answers):
+            if not finished and topic not in EVAL_TOPICS:
+                # A cut-off training answer would teach "stop mid-sentence, then
+                # ask". Eval keeps every question: it only uses the questions.
+                counts["dropped"] += 1
+                continue
             follow_up = FOLLOW_UPS[(i + TOPICS.index(topic)) % len(FOLLOW_UPS)].format(t=topic)
             row = {"topic": topic, "messages": [
                 {"role": "user", "content": question},
@@ -85,7 +93,8 @@ def main() -> None:
             split = "eval" if topic in EVAL_TOPICS else "train"
             (ev if split == "eval" else train).write(json.dumps(row, ensure_ascii=False) + "\n")
             counts[split] += 1
-    print(f"wrote {counts['train']} training and {counts['eval']} eval examples to {out}")
+    print(f"wrote {counts['train']} training and {counts['eval']} eval examples to {out} "
+          f"({counts['dropped']} training examples dropped: the answer didn't finish within 512 tokens)")
 
 
 if __name__ == "__main__":
