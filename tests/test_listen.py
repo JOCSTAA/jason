@@ -145,6 +145,18 @@ async def test_jason_acting_on_an_utterance_closes_it(setup):
     task.cancel()
 
 
+async def test_deciding_to_keep_listening_does_not_close_the_utterance(setup):
+    task = asyncio.create_task(setup.listener._watch_actions())
+    await asyncio.sleep(0)
+    say(setup.listener, [1] * 5 + [0] * 8)
+    uid = setup.listener.utterance_id
+    setup.bus.publish(ev.AgentAction(machine="mac", session_id=SESSION, payload=ev.AgentActionPayload(
+        action=ev.Action.SILENT, action_probs={ev.Action.SILENT: 1.0}, utterance_id=uid)))
+    await asyncio.sleep(0)
+    assert setup.listener.utterance_id == uid
+    task.cancel()
+
+
 async def test_still_talking_when_jason_acts_opens_a_new_utterance(setup):
     task = asyncio.create_task(setup.listener._watch_actions())
     await asyncio.sleep(0)

@@ -1,6 +1,8 @@
 """Command-line entry point.
 
-    jason run --role body|brain [--config PATH] [--count N] [--every S] [--text [--speak] | --listen] [--voice NAME] [--speed X]
+    jason run --role brain [--config PATH]
+    jason run --role body [--config PATH] [--text [--speak] | --listen | --ping [--count N] [--every S]]
+                          [--voice NAME] [--speed X]   (default: a spoken conversation)
     jason new-day [--role brain|body] [--config PATH]
     jason sleep [--config PATH]
     jason gen-token [--file PATH] [--force]
@@ -49,8 +51,9 @@ def main(argv: list[str] | None = None) -> None:
     run = sub.add_parser("run", help="run one machine's role")
     run.add_argument("--role", choices=["body", "brain"], required=True)
     run.add_argument("--config", type=Path, help="TOML config (default: config/<role>.toml)")
-    run.add_argument("--count", type=int, help="body only: stop after this many pings")
-    run.add_argument("--every", type=float, default=5.0, help="body only: seconds between pings")
+    run.add_argument("--ping", action="store_true", help="body only: the M0 pinger instead of a conversation")
+    run.add_argument("--count", type=int, help="body only, pinger: stop after this many pings (implies --ping)")
+    run.add_argument("--every", type=float, help="body only, pinger: seconds between pings (implies --ping)")
     run.add_argument("--text", action="store_true", help="body only: chat with Jason by typing (no audio)")
     run.add_argument("--speak", action="store_true", help="body only, with --text: Jason says his replies out loud")
     run.add_argument("--voice", help="body only: Kokoro voice for this run, e.g. am_puck (default: [tts] voice in the config)")
@@ -128,7 +131,11 @@ def _run(args: argparse.Namespace) -> None:
     else:
         from jason.body.main import run_body
 
-        asyncio.run(_until_stopped(run_body(cfg, count=args.count, every_s=args.every, text=args.text, listen=args.listen, speak=args.speak)))
+        ping = args.ping or args.count is not None or args.every is not None
+        voice = not (ping or args.text or args.listen)  # a spoken conversation is the default
+        asyncio.run(_until_stopped(run_body(
+            cfg, count=args.count, every_s=args.every or 5.0, text=args.text, listen=args.listen,
+            speak=args.speak, voice=voice)))
 
 
 def _new_day(args: argparse.Namespace) -> None:

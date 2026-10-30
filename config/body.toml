@@ -41,3 +41,14 @@ lead_ms = 30.0                         # Kokoro's padding (~1 s per clause) is t
 pause_comma_ms = 120.0
 pause_sentence_ms = 250.0
 pause_other_ms = 80.0
+
+[floor]
+# When Jason answers (jason/body/floor.py): the pause he waits for depends on
+# how finished Smart Turn says the user sounds. Hand-picked; learned from M4.
+sure_prob = 0.7                        # at or above: sounds finished ...
+wait_sure_ms = 200.0                   # ... answer once the pause is 200 ms long
+unsure_prob = 0.3                      # between: unsure ...
+wait_unsure_ms = 700.0
+wait_unlikely_ms = 1500.0              # below unsure_prob: sounds mid-thought
+tick_ms = 100.0
+policy_version = "rules-1"

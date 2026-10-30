@@ -15,7 +15,8 @@ in each 32 ms slice. A small hysteresis turns that into events:
 One utterance is one turn of the user's: a pause doesn't end it, so "so I
 was thinking... [pause] ...we could" stays one utterance with one id, and
 Smart Turn and speech-to-text see all of it. It ends when Jason acts on it
-(an agent_action naming it) or after `new_utterance_after_s` of silence.
+(an agent_action naming it that speaks: not `silent`) or after
+`new_utterance_after_s` of silence.
 
 At every pause, Smart Turn (design §3.3 model 2) scores the utterance so far.
 The floor controller (step 11) weighs that against how long the pause lasts.
@@ -161,11 +162,12 @@ class Listener:
             actions.cancel()
 
     async def _watch_actions(self) -> None:
-        # Jason acting on the utterance (replying to it) closes it: what the
-        # user says next is a new turn.
+        # Jason speaking in answer to the utterance closes it: what the user
+        # says next is a new turn. Deciding to keep listening (silent) doesn't.
         with self.bus.subscribe(ev.AgentAction) as actions:
             async for action in actions:
-                if action.payload.utterance_id and action.payload.utterance_id == self.utterance_id:
+                speaks = action.payload.action not in (ev.Action.SILENT, ev.Action.THINK)
+                if speaks and action.payload.utterance_id and action.payload.utterance_id == self.utterance_id:
                     self._close_utterance()
 
     @property

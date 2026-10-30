@@ -121,6 +121,20 @@ class TtsConfig(_Strict):
     pause_other_ms: Annotated[float, Field(ge=0)] = 80.0
 
 
+class FloorConfig(_Strict):
+    """The rule-based floor controller (jason/body/floor.py): how long a pause
+    it waits for before answering, by how finished Smart Turn says the user
+    sounds. M4 replaces these hand-picked numbers with a learned policy."""
+
+    sure_prob: Annotated[float, Field(gt=0, lt=1)] = 0.7  # at or above: sounds finished
+    unsure_prob: Annotated[float, Field(gt=0, lt=1)] = 0.3  # below: sounds mid-thought
+    wait_sure_ms: Annotated[float, Field(ge=0)] = 200.0
+    wait_unsure_ms: Annotated[float, Field(ge=0)] = 700.0
+    wait_unlikely_ms: Annotated[float, Field(ge=0)] = 1500.0
+    tick_ms: Annotated[float, Field(gt=0)] = 100.0  # how often it looks
+    policy_version: str = "rules-1"
+
+
 class BodyConfig(_Strict):
     role: Literal["body"]
     machine: MachineName
@@ -129,6 +143,7 @@ class BodyConfig(_Strict):
     audio: AudioConfig = AudioConfig()
     stt: SttConfig = SttConfig()
     tts: TtsConfig = TtsConfig()
+    floor: FloorConfig = FloorConfig()
 
 
 class BrainConfig(_Strict):

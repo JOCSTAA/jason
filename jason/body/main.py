@@ -1,9 +1,9 @@
 """Body-role entry point: `jason run --role body`.
 
-The body connects to the brain and either sends a ping every few seconds,
-printing the round trip, runs text-only chat (--text), or prints what the
-microphone's listener hears (--listen). Later M1 steps add speech-to-text,
-the floor controller and text-to-speech.
+The body connects to the brain, then by default holds a spoken conversation
+(jason/body/voice.py). Other modes: --text (typed chat, --speak to hear
+replies), --listen (print what the listener hears), --ping (the M0 pinger:
+a ping every few seconds, printing the round trip).
 """
 
 import asyncio
@@ -107,8 +107,10 @@ async def run_body(
     read_line: Callable[[str], Awaitable[str | None]] = read_stdin,
     listen: bool = False,
     speak: bool = False,
+    voice: bool = False,
 ) -> list[float]:
-    """Run until cancelled, or until `count` pings have been answered, or (with
+    """voice=True: a spoken conversation (what `jason run --role body` does).
+    Otherwise run until cancelled, or until `count` pings have been answered, or (with
     text=True) until the text chat ends; speak=True also says Jason's replies
     out loud. listen=True prints what the microphone's listener hears instead.
     speak and listen need the body's audio libraries.
@@ -141,6 +143,11 @@ async def run_body(
                 from jason.body.listen import show_listening  # needs the audio libraries
 
                 await show_listening(bus, cfg.audio, cfg.stt, out)
+                return []
+            if voice:
+                from jason.body.voice import voice_chat  # needs the audio libraries
+
+                await voice_chat(bus, cfg, out)
                 return []
             return await pinger(bus, client, count, every_s, out, rtts, offsets_ms)
 
