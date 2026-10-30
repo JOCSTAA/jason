@@ -109,3 +109,5 @@ def test_llm_is_unreachable_from_outside_and_pinned():
     # and fails when Windows holds part of the GPU.
     assert any(a.startswith("--gpu-memory-utilization=") for a in llm["command"])
     assert "llm" not in brain.get("depends_on", {})
+    # Compiled kernels are kept, or every restart recompiles (minutes).
+    assert any(v["target"] == "/root/.cache/vllm" for v in llm["volumes"])

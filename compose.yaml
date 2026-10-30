@@ -49,6 +49,14 @@ services:
               capabilities: [gpu]
     volumes:
       - llm-cache:/root/.cache/huggingface  # downloaded weights survive a rebuild
+      # Compiled kernels survive a restart too. The first start spent most of
+      # its 335 s compiling, and the nightly cycle restarts vLLM every morning.
+      - llm-compile-cache:/root/.cache/vllm
+    environment:
+      # Two more compile caches default to folders the container throws away;
+      # keep them in the same volume.
+      TRITON_CACHE_DIR: /root/.cache/vllm/triton
+      TORCHINDUCTOR_CACHE_DIR: /root/.cache/vllm/inductor
     shm_size: "8gb"
     command:
       - Qwen/Qwen3.5-4B
@@ -77,3 +85,4 @@ services:
 
 volumes:
   llm-cache:
+  llm-compile-cache:
