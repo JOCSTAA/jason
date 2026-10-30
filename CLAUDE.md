@@ -67,7 +67,7 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 - Token (once): `uv run jason gen-token`, then copy `~/jason-data/link_token` to the other machine
 - Run the brain: `docker compose up --build -d` starts the brain and the LLM (logs: `docker compose logs -f brain` or `llm`; stop: `docker compose down`). The LLM needs the NVIDIA GPU, so on the Mac start only the brain: `docker compose up --build -d brain`. `config/brain.toml` uses the container's paths, so outside Docker pass a config with local paths
 - Check the LLM (brain machine): `docker compose exec -T brain python - < scripts/llm_check.py`
-- Run the body (on the Mac): `uv run jason run --role body` (`--count N` to stop after N pings); `--text` to chat with Jason by typing (add `--speak` to hear him); `--listen` to watch speech start, pauses and end-of-turn live
+- Run the body (on the Mac): `uv run jason run --role body` (`--count N` to stop after N pings); `--text` to chat with Jason by typing (add `--speak` to hear him; `--voice NAME --speed X` try another voice for one run, the default is `[tts]` in `config/body.toml`); `--listen` to watch speech start, pauses and end-of-turn live
 - New day (until sleep exists): `docker compose exec brain jason new-day`
 - Without `--config`, commands use `config/<role>.toml`
 

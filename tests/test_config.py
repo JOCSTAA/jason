@@ -205,3 +205,30 @@ def test_windows_paths_in_forward_slashes_or_single_quotes_load(tmp_path):
     text = BODY_TOML.format(state_dir="C:/Users/me/state", token_file="t")
     text = text.replace('token_file = "t"', "token_file = 'C:\\Users\\me\\link_token'")
     load_config(write(tmp_path, text), "body")
+
+
+def test_voice_and_speed_can_be_overridden_for_one_run(monkeypatch):
+    from jason import cli
+
+    seen = {}
+
+    def fake_run_body(cfg, **kw):
+        seen["tts"] = cfg.tts
+
+        async def done():
+            return []
+
+        return done()
+
+    monkeypatch.setattr("jason.body.main.run_body", fake_run_body)
+    cli.main(["run", "--role", "body", "--voice", "bm_george", "--speed", "1.25"])
+    assert (seen["tts"].voice, seen["tts"].speed) == ("bm_george", 1.25)
+    # The committed config is untouched.
+    assert load_config(REPO_CONFIG / "body.toml", "body").tts.voice == "am_puck"
+
+
+def test_an_out_of_range_speed_override_is_refused(monkeypatch):
+    from jason import cli
+
+    with pytest.raises(SystemExit):
+        cli.main(["run", "--role", "body", "--speed", "5"])

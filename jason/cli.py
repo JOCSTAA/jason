@@ -1,6 +1,6 @@
 """Command-line entry point.
 
-    jason run --role body|brain [--config PATH] [--count N] [--every S] [--text [--speak] | --listen]
+    jason run --role body|brain [--config PATH] [--count N] [--every S] [--text [--speak] | --listen] [--voice NAME] [--speed X]
     jason new-day [--role brain|body] [--config PATH]
     jason sleep [--config PATH]
     jason gen-token [--file PATH] [--force]
@@ -23,8 +23,10 @@ from pydantic import ValidationError
 
 from jason.core.config import (
     DEFAULT_TOKEN_FILE,
+    BodyConfig,
     BrainConfig,
     TokenError,
+    TtsConfig,
     generate_token,
     load_config,
     load_token,
@@ -51,6 +53,8 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--every", type=float, default=5.0, help="body only: seconds between pings")
     run.add_argument("--text", action="store_true", help="body only: chat with Jason by typing (no audio)")
     run.add_argument("--speak", action="store_true", help="body only, with --text: Jason says his replies out loud")
+    run.add_argument("--voice", help="body only: Kokoro voice for this run, e.g. am_puck (default: [tts] voice in the config)")
+    run.add_argument("--speed", type=float, help="body only: speaking speed for this run, e.g. 1.1 (default: [tts] speed)")
     run.add_argument("--listen", action="store_true",
                      help="body only: print speech start, pauses and end-of-turn probability as you talk")
 
@@ -113,6 +117,10 @@ async def _until_stopped[T](coro: Coroutine[Any, Any, T]) -> T | None:
 
 def _run(args: argparse.Namespace) -> None:
     cfg = load_config(args.config or default_config(args.role), args.role)
+    if isinstance(cfg, BodyConfig) and (args.voice or args.speed):
+        # A one-run override of the voice settings; the config file stays as it is.
+        tts = cfg.tts.model_copy(update={k: v for k, v in (("voice", args.voice), ("speed", args.speed)) if v})
+        cfg = cfg.model_copy(update={"tts": TtsConfig.model_validate(tts.model_dump())})
     if isinstance(cfg, BrainConfig):
         from jason.brain.main import run_brain
 
