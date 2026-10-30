@@ -39,7 +39,7 @@ from jason.body.audio import MIC_SR, AudioIO, MicFrame
 from jason.body.turn import SmartTurn
 from jason.core import events as ev
 from jason.core.bus import EventBus
-from jason.core.config import AudioConfig
+from jason.core.config import AudioConfig, SttConfig
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +168,10 @@ class Listener:
                 if action.payload.utterance_id and action.payload.utterance_id == self.utterance_id:
                     self._close_utterance()
 
+    @property
+    def speaking(self) -> bool:
+        return self.activity.speaking
+
     def utterance_audio(self) -> np.ndarray:
         """The current utterance so far (16 kHz), with a little audio from just
         before it began. Empty when there's no open utterance."""
@@ -241,16 +245,27 @@ class Listener:
         if self.activity.speaking:
             self._reopen = True
 
-async def show_listening(bus: EventBus, cfg: AudioConfig, out: Callable[[str], None] = print) -> None:
-    """`jason run --role body --listen`: print what the listener hears, live."""
+async def show_listening(
+    bus: EventBus, cfg: AudioConfig, stt: SttConfig | None = None, out: Callable[[str], None] = print
+) -> None:
+    """`jason run --role body --listen`: print what the listener hears, live,
+    and (with an [stt] config) what speech-to-text makes of it."""
+    from jason.body.stt import Transcriber, make_backend
+
     audio = AudioIO(cfg.input_device, cfg.output_device)
-    audio.start()
     listener = Listener(bus, audio, cfg)
-    task = asyncio.create_task(listener.run())
+    tasks = []
+    if stt is not None:
+        out("Loading speech-to-text (the first time downloads the model, 2.5 GB) ...")
+        transcriber = Transcriber(bus, listener, make_backend(stt), stt)
+        await transcriber.load()
+        tasks.append(asyncio.create_task(transcriber.run()))
+    audio.start()
+    tasks.append(asyncio.create_task(listener.run()))
     out("Listening; talk, pause, trail off. Ctrl+C to stop.")
     starts: dict[str, int] = {}
     try:
-        with bus.subscribe(ev.SpeechStart, ev.SpeechEnd, ev.TurnEndProb) as events:
+        with bus.subscribe(ev.SpeechStart, ev.SpeechEnd, ev.TurnEndProb, ev.UserPartial, ev.UserFinal) as events:
             async for e in events:
                 u = e.payload.utterance_id[:6]
                 if isinstance(e, ev.SpeechStart):
@@ -258,9 +273,14 @@ async def show_listening(bus: EventBus, cfg: AudioConfig, out: Callable[[str], N
                     out(f"[{u}] speech start{' (while Jason talks)' if e.payload.during_agent_speech else ''}")
                 elif isinstance(e, ev.SpeechEnd):
                     out(f"[{u}] pause after {e.payload.speech_ms:.0f} ms of speech")
-                else:
+                elif isinstance(e, ev.TurnEndProb):
                     verdict = "finished" if e.payload.prob >= 0.5 else "not finished"
                     out(f"[{u}] end of turn? {e.payload.prob:.2f} ({verdict})")
+                elif isinstance(e, ev.UserPartial):
+                    out(f"[{u}]   ... {e.payload.text}")
+                else:
+                    out(f"[{u}] heard: \"{e.payload.text}\"")
     finally:
-        task.cancel()
+        for task in tasks:
+            task.cancel()
         audio.stop()

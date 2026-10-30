@@ -91,12 +91,23 @@ class AudioConfig(_Strict):
         return self.assets_dir or REPO_ASSETS
 
 
+class SttConfig(_Strict):
+    """Speech-to-text (jason/body/stt.py). The backend is swappable so a
+    non-Mac body can use another one; only Parakeet on MLX exists so far."""
+
+    backend: Literal["parakeet-mlx"] = "parakeet-mlx"
+    model: str = "mlx-community/parakeet-tdt-0.6b-v3"
+    revision: str = "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15"  # pinned: a new upload can't change Jason's ears
+    partial_every_s: Seconds = 0.5  # re-transcribe the utterance this often while the user speaks
+
+
 class BodyConfig(_Strict):
     role: Literal["body"]
     machine: MachineName
     state_dir: Path
     link: BodyLink
     audio: AudioConfig = AudioConfig()
+    stt: SttConfig = SttConfig()
 
 
 class BrainConfig(_Strict):

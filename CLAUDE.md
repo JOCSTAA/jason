@@ -35,6 +35,7 @@ jason/
   body/audio_check.py  `jason audio-check`: echo before/after cancellation, speaker-to-mic delay, VAD on Jason's voice
   body/listen.py    Silero VAD → speech_start/speech_end; Smart Turn at each pause → turn_end_prob
   body/turn.py      Smart Turn model + Whisper log-mel features in numpy
+  body/stt.py       speech-to-text: swappable backend (Parakeet on MLX); partials while speaking, a final at every pause
   brain/main.py     brain role: ping responder + LLM component
   brain/llm.py      writes Jason's replies: prompt, vLLM stream, clauses, cancel
 config/body.toml, config/brain.toml  one config per role (committed, no secrets)
@@ -60,7 +61,7 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 
 ## Commands
 - Install: `uv sync` (uv installs Python 3.12 and the locked dependencies into `.venv/`); on the body's machine (the Mac) `uv sync --extra body` for the audio libraries
-- Tests: `uv run pytest` (strict: `uv run pytest -W error`; container test: `JASON_DOCKER_TESTS=1 uv run pytest tests/test_container.py`; real mic and speaker: `JASON_AUDIO_TESTS=1 uv run pytest tests/test_audio.py`, or `uv run jason audio-check`)
+- Tests: `uv run pytest` (strict: `uv run pytest -W error`; container test: `JASON_DOCKER_TESTS=1 uv run pytest tests/test_container.py`; real mic and speaker: `JASON_AUDIO_TESTS=1 uv run pytest tests/test_audio.py`, or `uv run jason audio-check`; real Parakeet: `JASON_STT_TESTS=1 uv run pytest tests/test_stt.py`)
 - Token (once): `uv run jason gen-token`, then copy `~/jason-data/link_token` to the other machine
 - Run the brain: `docker compose up --build -d` starts the brain and the LLM (logs: `docker compose logs -f brain` or `llm`; stop: `docker compose down`). The LLM needs the NVIDIA GPU, so on the Mac start only the brain: `docker compose up --build -d brain`. `config/brain.toml` uses the container's paths, so outside Docker pass a config with local paths
 - Check the LLM (brain machine): `docker compose exec -T brain python - < scripts/llm_check.py`

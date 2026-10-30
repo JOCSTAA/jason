@@ -23,3 +23,9 @@ vad_off_threshold = 0.35               # a pause: below this ...
 pause_ms = 200.0                       # ... for 200 ms
 preroll_ms = 300.0
 new_utterance_after_s = 3.0
+
+[stt]
+backend = "parakeet-mlx"               # Apple Silicon only; a non-Mac body needs another backend
+model = "mlx-community/parakeet-tdt-0.6b-v3"
+revision = "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15"  # 2.5 GB, downloaded once into ~/.cache/huggingface
+partial_every_s = 0.5

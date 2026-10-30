@@ -85,6 +85,10 @@ class UserPartialPayload(Payload):
 
 
 class UserFinalPayload(Payload):
+    """The transcript of the utterance up to a pause. Emitted at every pause,
+    because any pause may turn out to be the end of the turn; a later one for
+    the same utterance (the user carried on) supersedes it."""
+
     utterance_id: str
     text: str
 

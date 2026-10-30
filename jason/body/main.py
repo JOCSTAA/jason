@@ -132,7 +132,7 @@ async def run_body(
             if listen:
                 from jason.body.listen import show_listening  # needs the audio libraries
 
-                await show_listening(bus, cfg.audio, out)
+                await show_listening(bus, cfg.audio, cfg.stt, out)
                 return []
             return await pinger(bus, client, count, every_s, out, rtts, offsets_ms)
 
