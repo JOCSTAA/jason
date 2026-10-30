@@ -105,4 +105,7 @@ def test_llm_is_unreachable_from_outside_and_pinned():
     assert not llm.get("ports")
     assert "@sha256:" in llm["image"]
     assert "--revision=851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a" in llm["command"]
+    # vLLM's startup check uses the 0.92 default even with a fixed KV cache,
+    # and fails when Windows holds part of the GPU.
+    assert any(a.startswith("--gpu-memory-utilization=") for a in llm["command"])
     assert "llm" not in brain.get("depends_on", {})

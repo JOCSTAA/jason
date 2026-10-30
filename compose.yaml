@@ -59,8 +59,13 @@ services:
       - --max-num-seqs=4                # live reply plus judge and Wonder calls later
       # A fixed 1 GiB KV cache (about 22,000 tokens) instead of a share of the
       # GPU: the spike's default reserved 6x what one user needs, and the rest
-      # is room for the embedding model (M2). Overrides --gpu-memory-utilization.
+      # is room for the embedding model (M2).
       - --kv-cache-memory-bytes=1073741824
+      # With the KV cache fixed, this is only a startup check: vLLM refuses to
+      # start unless this share of the GPU is free. The default (0.92) failed
+      # because Windows itself holds about 1.3 GB; 0.70 (11.2 GiB) covers the
+      # weights (~8.5 GiB), the 1 GiB cache and working memory.
+      - --gpu-memory-utilization=0.70
       - --reasoning-parser=qwen3
       - '--default-chat-template-kwargs={"enable_thinking": false}'
     healthcheck:
