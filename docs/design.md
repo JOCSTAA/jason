@@ -1,6 +1,6 @@
 # Jason — Design Doc
 
-_Last updated: 2026-10-29 (v2.6: live model is the 4B in bf16, trained nightly with LoRA and merged; see `spikes/m0-lora-training.md`)_
+_Last updated: 2026-10-30 (v2.7: added §5.6 Goal system, drives and emotion-like signals [Proposed, future])_
 
 Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
@@ -197,6 +197,67 @@ Two families that balance each other. Curiosity alone produces an agent that int
 - Spend the sparse RL signal on small, high-level decisions; use pretrained models for hearing, language and speech.
 - Use tested RL implementations, not hand ports. Validate every learning loop on a small known-reward setup (a simulated user) before going live.
 
+### 5.6 Goal system, drives and emotion-like signals [Proposed — future]
+
+_Owner's idea, 2026-10-30. Not scheduled: earliest after M7, since it needs Wonder (or the judge) to estimate progress toward a goal. Recorded now so earlier choices leave room for it._
+
+**The idea.** Jason forms **goals** in response to stimuli, gives each one a **priority**, and earns reward for actions that move him toward a goal. The owner's example: "it's too hot here" leads to the goal "walk to the fridge". Everything Jason wants comes from three stimulus sources:
+
+| Source | Human example | Jason equivalent | Becomes reward through |
+|---|---|---|---|
+| **Goals** (learning) | Curiosity, mastery | "Learn new things" is the first standing goal; later, goals Jason forms himself | Learning progress (§5.3 A) and progress toward each goal |
+| **Survival** (homeostasis) | Hunger, temperature, fatigue | Internal sensors: time since last sleep and size of the unconsolidated log, GPU temperature and memory, latency, link health, error rate | Drive reduction: reward when a variable moves back toward its set point |
+| **Social** | Approval, belonging | Josh's reactions (§5.3 B); time since the last conversation | Josh's reactions |
+
+This would replace the two reward families in §5.3 with three: curiosity becomes the first goal, and survival is new.
+
+**How it would work**
+1. **Stimulus to goal.** Sensors publish events, and the core turns each into a short text statement ("I've gone 20 hours without sleeping"). If no similar goal is active, a goal is created with a priority; if one is, its priority is raised or reassessed.
+2. **Where goals live.** Active goals sit in a goal list loaded into short-term memory, like an agenda. Completed and abandoned goals are summarized into long-term memory during sleep, so Jason knows what he has done before.
+3. **Progress reward.** Each action is scored by how much it changes the estimated distance to the goal, using potential-based shaping: r = γ·Φ(after) − Φ(before), where Φ is the estimated closeness to the goal. Real progress is rewarded, and going in circles earns nothing.
+4. **Speed.** Handled by the discount γ and a small time cost per step, not a separate speed bonus; a speed bonus would encourage declaring goals done early.
+5. **Reward mix.** total = social + β_g × goal progress + β_s × survival, with both β small and capped so self-made rewards can't outweigh Josh's reactions.
+
+**Guardrails against easy self-made goals** (the owner's question: what stops Jason creating goals just to complete them?)
+- Goal reward comes from progress, and repeats pay less: each new goal is compared with goal history (embedding similarity), and near-duplicates of completed goals earn little.
+- Completion is judged from evidence in the event log by a separate checker (the reaction judge, or the hosted model at night), never by Jason's own claim.
+- Every goal must point to the event that caused it.
+- Jason can't change his reward functions; they change only during sleep, behind the eval gate.
+- Warning sign to track: goal completions rising while Josh's positive reactions stay flat means Jason is gaming his own goals.
+
+**Emotion-like signals.** Rather than adding emotions as extra rewards, which Jason would learn to chase, compute them from the reward signals and use them to adjust how he acts and learns:
+
+| Signal | Computed from | Effect |
+|---|---|---|
+| Satisfaction | Reward better than expected | Strengthen what just happened |
+| Frustration | Repeated lack of progress on a goal | Change approach, ask Josh for help, or drop the goal |
+| Caution (fear) | Wonder predicts a negative reaction | Fewer interjections, more `think()` |
+| Sadness | Falling trend in social reward | Lower curiosity weight, listen more |
+| Boredom | Learning progress near zero | Explore more, form new goals |
+
+They are logged like every other signal, so their effect can be measured, and Jason can say them out loud ("I'm stuck on this").
+
+**Human reward variables translated**
+
+| Human variable | Jason equivalent |
+|---|---|
+| Homeostatic needs (hunger, thirst, temperature, fatigue) | Survival drives from internal sensors |
+| Reward prediction error (dopamine) | Reward minus the value the policy expected |
+| Wanting vs. liking | Goal priority (wanting) and reward on completion (liking), tracked separately |
+| Novelty and curiosity | Learning progress (§5.3 A) |
+| Mastery | Getting faster or more reliable at a kind of goal |
+| Autonomy | Goals Jason forms himself |
+| Social approval and belonging | Josh's reactions; time since the last conversation |
+| Effort | Time cost per step; compute cost |
+| Delay discounting | The discount γ |
+| Loss aversion | Negative rewards weighted more heavily than positive ones |
+
+**How we'd know it works:** survival variables stay in range without Josh stepping in; Jason completes held-out goals faster over time; the gaming warning sign stays quiet; and Josh's reaction rate is no lower than without goals (compared on the replay set).
+
+**Risks and prerequisites:** estimating progress for each action is research-grade and noisy; a voice agent's "body" is thin, so most goals will be conversational or about knowledge; adopting this changes the decided reward structure in §5.3 and needs a decision-log entry.
+
+**Related research:** MAGELLAN (2025; LLM agents choosing their own goals by predicted learning progress), homeostatic RL (Keramati & Gutkin, 2014), emotion in RL agents (Moerland et al., 2018 survey), EILS (2025; emotion-inspired learning signals). All research-grade.
+
 ---
 
 ## 6. Wonder — the world model [Decided]
@@ -385,7 +446,7 @@ Each milestone has a measurable exit criterion.
 | **M7** | Wonder v1 + `think()` | Train Wonder nightly; enable `think()` when it beats baseline | `think()` decisions earn higher reward than non-think decisions in comparable situations |
 | **M8** | Sleep v2: weights | Nightly LoRA via context distillation + DPO with replay and gate; graduation of lessons | Graduation tests pass; forgetting set stable; next-day reaction rate ≥ previous adapter |
 | **M9** | Dreaming | Dyna-style imagined rollouts mixed with real replay | Policy trained with dreams beats policy without, on real held-out data |
-| **M10+** | Expand | Vision input, memory-as-RL-action, richer curiosity, bigger model / rented training (Stack C) | — |
+| **M10+** | Expand | Vision input, memory-as-RL-action, richer curiosity, goal system and drives (§5.6), bigger model / rented training (Stack C) | — |
 
 ---
 
@@ -409,6 +470,7 @@ Can wait:
 - How to define "new information" robustly (M7).
 - Wonder implementation: prompt vs. adapter vs. separate small model (M7).
 - Whether memory writes become an RL action (M10+).
+- Goal system, survival drives and emotion-like signals (§5.6; after M7).
 
 ---
 
