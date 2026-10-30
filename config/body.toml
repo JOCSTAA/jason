@@ -29,3 +29,15 @@ backend = "parakeet-mlx"               # Apple Silicon only; a non-Mac body need
 model = "mlx-community/parakeet-tdt-0.6b-v3"
 revision = "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15"  # 2.5 GB, downloaded once into ~/.cache/huggingface
 partial_every_s = 0.5
+
+[tts]
+backend = "kokoro-mlx"                 # Apple Silicon only; a non-Mac body needs another backend
+model = "mlx-community/Kokoro-82M-bf16"
+revision = "a71e4d38b236d968966a2002c4c895dbd12b1c3c"  # 330 MB, downloaded once into ~/.cache/huggingface
+voice = "am_puck"                      # chosen by ear (scripts/voice_samples.py)
+speed = 1.1
+min_words = 3                          # shorter clauses (not the first) are spoken with the next one
+lead_ms = 30.0                         # Kokoro's padding (~1 s per clause) is trimmed to these pauses
+pause_comma_ms = 120.0
+pause_sentence_ms = 250.0
+pause_other_ms = 80.0

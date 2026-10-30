@@ -1,6 +1,6 @@
 # Jason — Design Doc
 
-_Last updated: 2026-10-30 (v2.12: §10 the brain keeps the GPU awake during a conversation)_
+_Last updated: 2026-10-30 (v2.13: §5.3 B how things are said: non-speech sounds such as laughter (decided, M3) and tone of voice (proposed))_
 
 Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
@@ -178,6 +178,9 @@ Two families that balance each other. Curiosity alone produces an agent that int
 - Each reaction is attributed to a specific agent action (credit assignment). Reactions arrive late and may refer to something said several seconds or turns earlier.
 - Pipeline: classify every user utterance (LLM judge) for whether it's feedback, which action it targets, polarity and strength. Log the raw transcript and the classification so rewards can be **re-scored during sleep** by a stronger hosted model.
 - Implicit signals: barge-in (interrupting Jason = mild negative for the current action), corrections, repeated questions, topic abandonment, follow-up engagement.
+- **How things are said, not only what [Decided as a principle].** Much of human social understanding is in small vocal details, and the transcript drops them. Reaction signals and the logs carry them as events alongside the words.
+  - **Non-speech vocal sounds [Decided, M3]:** laughter, sighs, gasps, wordless "hm"/"ugh". Jason can't hear them yet: Silero is trained on speech and often misses a laugh, and Parakeet writes only words, so a laugh transcribes to nothing (noticed by the owner in M1). A small sound-event classifier trained on AudioSet (e.g. YAMNet, about 4 MB, or PANNs) runs on the cleaned mic audio and emits them as events; the reaction judge uses them, and a laugh right after something Jason said is one of the clearest positive reactions there is.
+  - **Tone of voice [Proposed, milestone open]:** warmth, irritation, excitement, hesitation, scored from the audio by a speech-emotion model (e.g. the emotion2vec family), so a flat "fine." and a bright "fine!" are told apart. Research-grade.
 - Explicit channel: "good job, Jason" / "don't do that" as a high-confidence signal.
 - Content matters, not just polarity: a correction says *what* was wrong. It feeds memory and DPO pairs (Jason's reply vs. the corrected version), not just a scalar.
 - Prior art: TAMER / COACH (learning from human reward with delay), RLHI (2025, learning from real user conversations; research-grade).
@@ -469,7 +472,7 @@ Each milestone has a measurable exit criterion.
 | **M0** | Setup | Repo layout, CLAUDE.md, pinned environment (both machines), event schema, raw logging, LAN link; follows the §3.4 portability rules (configurable brain address, internet-ready transport, containerized brain, single state location, separate serving/sleep processes, network RTT logged) | Mac↔Windows event round trip logged; one entry point |
 | **M1** | Conversation loop | Mic → AEC → VAD/Smart Turn → STT → local LLM → TTS → speaker, across the split; barge-in | End-to-end voice conversation, < 1 s median to first audio, per-stage latency logged |
 | **M2** | Memory v1 | Raw log, STM file, LTM entries + search, wake-up briefing, manual "sleep" that consolidates | Recalls facts across sessions on a 20-question own-conversation test |
-| **M3** | Feedback signals + Wonder logging | Reaction classifier, credit assignment, implicit signals, re-scoring script; Wonder predict-and-log | Classifier agreement with hand labels ≥ target on 100 utterances; Wonder accuracy tracked daily |
+| **M3** | Feedback signals + Wonder logging | Reaction classifier, credit assignment, implicit signals, non-speech vocal sounds such as laughter (sound-event classifier), re-scoring script; Wonder predict-and-log | Classifier agreement with hand labels ≥ target on 100 utterances; Wonder accuracy tracked daily |
 | **M4** | First learning loop | Contextual bandit for one decision (proposed: `ask` vs. not) with frozen/learner swap; validated on simulated user first | Learns simulated user's hidden preference; then beats frozen baseline on live reward over 1–2 weeks |
 | **M5** | Proactivity | Floor controller with full action set (minus `think()`), rule-based then learned | Interjections/backchannels happen; barge-in and question rates within target |
 | **M6** | Sleep v1 | Scheduled sleep: re-score, consolidate memory, policy training, GEPA prompts, eval gate, rollback, sleep report | Nightly report; at least one gated promotion that improves next-day reaction rate |

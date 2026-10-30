@@ -36,6 +36,7 @@ jason/
   body/listen.py    Silero VAD → speech_start/speech_end; Smart Turn at each pause → turn_end_prob
   body/turn.py      Smart Turn model + Whisper log-mel features in numpy
   body/stt.py       speech-to-text: swappable backend (Parakeet on MLX); partials while speaking, a final at every pause
+  body/tts.py       text-to-speech: swappable backend (Kokoro on MLX); reply clauses → speaker, reply_heard when played
   brain/main.py     brain role: ping responder + LLM component
   brain/llm.py      writes Jason's replies: prompt, vLLM stream, clauses, cancel
 config/body.toml, config/brain.toml  one config per role (committed, no secrets)
@@ -43,6 +44,7 @@ config/persona.md                    Jason's system prompt (the brain's [llm] pe
 assets/                              committed model files (Silero, Smart Turn) and the voice-check clip; see assets/README.md
 Dockerfile, compose.yaml             the brain's container (CPU-only) and the `llm` service (vLLM, GPU, no published port)
 scripts/llm_check.py                 checks the LLM from inside the brain container
+scripts/voice_samples.py             body: plays candidate Kokoro voices, to pick Jason's by ear
 tests/                               pytest; test_container.py is opt-in
 ```
 
@@ -61,11 +63,11 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 
 ## Commands
 - Install: `uv sync` (uv installs Python 3.12 and the locked dependencies into `.venv/`); on the body's machine (the Mac) `uv sync --extra body` for the audio libraries
-- Tests: `uv run pytest` (strict: `uv run pytest -W error`; container test: `JASON_DOCKER_TESTS=1 uv run pytest tests/test_container.py`; real mic and speaker: `JASON_AUDIO_TESTS=1 uv run pytest tests/test_audio.py`, or `uv run jason audio-check`; real Parakeet: `JASON_STT_TESTS=1 uv run pytest tests/test_stt.py`)
+- Tests: `uv run pytest` (strict: `uv run pytest -W error`; container test: `JASON_DOCKER_TESTS=1 uv run pytest tests/test_container.py`; real mic and speaker: `JASON_AUDIO_TESTS=1 uv run pytest tests/test_audio.py`, or `uv run jason audio-check`; real Parakeet: `JASON_STT_TESTS=1 uv run pytest tests/test_stt.py`; real Kokoro: `JASON_TTS_TESTS=1 uv run pytest tests/test_tts.py`)
 - Token (once): `uv run jason gen-token`, then copy `~/jason-data/link_token` to the other machine
 - Run the brain: `docker compose up --build -d` starts the brain and the LLM (logs: `docker compose logs -f brain` or `llm`; stop: `docker compose down`). The LLM needs the NVIDIA GPU, so on the Mac start only the brain: `docker compose up --build -d brain`. `config/brain.toml` uses the container's paths, so outside Docker pass a config with local paths
 - Check the LLM (brain machine): `docker compose exec -T brain python - < scripts/llm_check.py`
-- Run the body (on the Mac): `uv run jason run --role body` (`--count N` to stop after N pings); `--text` to chat with Jason by typing (no audio); `--listen` to watch speech start, pauses and end-of-turn live
+- Run the body (on the Mac): `uv run jason run --role body` (`--count N` to stop after N pings); `--text` to chat with Jason by typing (add `--speak` to hear him); `--listen` to watch speech start, pauses and end-of-turn live
 - New day (until sleep exists): `docker compose exec brain jason new-day`
 - Without `--config`, commands use `config/<role>.toml`
 

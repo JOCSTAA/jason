@@ -18,16 +18,26 @@ jason = "jason.cli:main"
 [project.optional-dependencies]
 # The body's audio stack (docs/spikes/m1-mac-audio.md), on the machine with the
 # mic and speaker: `uv sync --extra body`. Optional so the brain's image never
-# installs audio libraries. All run on macOS, Linux and Windows, except
-# parakeet-mlx (speech-to-text on Apple Silicon): a non-Mac body needs another
-# speech-to-text backend (jason/body/stt.py).
+# installs audio libraries. All run on macOS, Linux and Windows, except the
+# Apple Silicon ones marked darwin: parakeet-mlx (speech-to-text) and Kokoro's
+# mlx-audio with misaki's English phonemizer (spaCy, its small English model
+# pinned by URL so nothing downloads at runtime, and espeak). A non-Mac body
+# needs other backends (jason/body/stt.py, jason/body/tts.py). misaki[en] is
+# avoided on purpose: it adds a spaCy plugin that loads PyTorch for nothing.
 body = [
+    "en-core-web-sm ; sys_platform == 'darwin'",
+    "espeakng-loader>=0.2.4 ; sys_platform == 'darwin'",
     "livekit>=1.2.0",
+    "misaki>=0.9.4 ; sys_platform == 'darwin'",
+    "mlx-audio>=0.6.3 ; sys_platform == 'darwin'",
+    "num2words>=0.5.14 ; sys_platform == 'darwin'",
     "numpy>=2.5.4",
     "onnxruntime>=1.31.1",
     "parakeet-mlx>=0.5.3 ; sys_platform == 'darwin'",
+    "phonemizer-fork>=3.3.2 ; sys_platform == 'darwin'",
     "sounddevice>=0.5.6",
     "soxr>=1.1.0",
+    "spacy>=3.8 ; sys_platform == 'darwin'",
 ]
 
 [build-system]
@@ -37,6 +47,9 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 # Flat layout: the package lives at ./jason, not ./src/jason.
 module-root = ""
+
+[tool.uv.sources]
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

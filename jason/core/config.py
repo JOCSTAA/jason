@@ -101,6 +101,26 @@ class SttConfig(_Strict):
     partial_every_s: Seconds = 0.5  # re-transcribe the utterance this often while the user speaks
 
 
+class TtsConfig(_Strict):
+    """Text-to-speech (jason/body/tts.py): swappable backend; only Kokoro on
+    MLX exists so far."""
+
+    backend: Literal["kokoro-mlx"] = "kokoro-mlx"
+    model: str = "mlx-community/Kokoro-82M-bf16"
+    revision: str = "a71e4d38b236d968966a2002c4c895dbd12b1c3c"
+    voice: str = "am_puck"
+    speed: Annotated[float, Field(gt=0.5, lt=2.0)] = 1.1
+    # A clause after the first with fewer words than this is held and spoken
+    # with the next one ("Josh." alone sounds choppy). The first never waits.
+    min_words: Annotated[int, Field(ge=1)] = 3
+    # Kokoro pads each clause with ~1 s of silence; it's trimmed and replaced by
+    # a pause that fits the clause's last punctuation.
+    lead_ms: Annotated[float, Field(ge=0)] = 30.0
+    pause_comma_ms: Annotated[float, Field(ge=0)] = 120.0
+    pause_sentence_ms: Annotated[float, Field(ge=0)] = 250.0
+    pause_other_ms: Annotated[float, Field(ge=0)] = 80.0
+
+
 class BodyConfig(_Strict):
     role: Literal["body"]
     machine: MachineName
@@ -108,6 +128,7 @@ class BodyConfig(_Strict):
     link: BodyLink
     audio: AudioConfig = AudioConfig()
     stt: SttConfig = SttConfig()
+    tts: TtsConfig = TtsConfig()
 
 
 class BrainConfig(_Strict):

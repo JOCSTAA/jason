@@ -106,10 +106,12 @@ async def run_body(
     text: bool = False,
     read_line: Callable[[str], Awaitable[str | None]] = read_stdin,
     listen: bool = False,
+    speak: bool = False,
 ) -> list[float]:
     """Run until cancelled, or until `count` pings have been answered, or (with
-    text=True) until the text chat ends. listen=True prints what the
-    microphone's listener hears instead (needs the body's audio libraries).
+    text=True) until the text chat ends; speak=True also says Jason's replies
+    out loud. listen=True prints what the microphone's listener hears instead.
+    speak and listen need the body's audio libraries.
 
     Raises LinkAuthError / LinkVersionError if the brain can't be talked to.
     """
@@ -126,6 +128,12 @@ async def run_body(
             await client.ready.wait()
             out(f"connected; session {bus.session_id}")
             bus.emit(ev.System, ev.SystemPayload(kind="startup", message="body started"))
+            if text and speak:
+                from jason.body.tts import speak_replies  # needs the audio libraries
+
+                async with speak_replies(bus, cfg, out):
+                    await text_chat(bus, read_line, out, report_heard=False)
+                return []
             if text:
                 await text_chat(bus, read_line, out)
                 return []

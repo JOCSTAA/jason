@@ -32,8 +32,10 @@ async def text_chat(
     read_line: Callable[[str], Awaitable[str | None]] = read_stdin,
     out: Callable[[str], None] = print,
     reply_timeout_s: float = 30.0,
+    report_heard: bool = True,
 ) -> None:
-    """Chat until the input ends or the user types /quit."""
+    """Chat until the input ends or the user types /quit. With report_heard
+    False (when Jason speaks out loud), the speaker reports what was heard."""
     out("Type to talk to Jason; /quit or Ctrl+D to stop.")
     with bus.subscribe(ev.ReplyChunk, ev.System) as replies:
         while True:
@@ -42,10 +44,11 @@ async def text_chat(
                 return
             if not line.strip():
                 continue
-            await _one_turn(bus, replies, line.strip(), out, reply_timeout_s)
+            await _one_turn(bus, replies, line.strip(), out, reply_timeout_s, report_heard)
 
 
-async def _one_turn(bus, replies, text: str, out: Callable[[str], None], timeout_s: float) -> None:
+async def _one_turn(bus, replies, text: str, out: Callable[[str], None], timeout_s: float,
+                    report_heard: bool = True) -> None:
     utterance_id = uuid4().hex
     final = bus.emit(ev.UserFinal, ev.UserFinalPayload(utterance_id=utterance_id, text=text))
     action = bus.emit(
@@ -82,6 +85,8 @@ async def _one_turn(bus, replies, text: str, out: Callable[[str], None], timeout
         return
     if first_ms is not None:
         out(f"[first clause after {first_ms:.0f} ms]")
+    if not report_heard:
+        return
     # Everything shown was "heard". played_ms is audio time, so 0 in text mode.
     bus.emit(
         ev.ReplyHeard,
