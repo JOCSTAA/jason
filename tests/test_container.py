@@ -67,7 +67,8 @@ token_file = "{(data / 'link_token').as_posix()}"
 clock_sync_s = 0.5
 """)
 
-    up = compose(env, "up", "--build", "-d")
+    # Only the brain: the llm service needs an NVIDIA GPU and a 9 GB model.
+    up = compose(env, "up", "--build", "-d", "brain")
     assert up.returncode == 0, up.stderr
     try:
         wait_for_listening(env)
@@ -94,3 +95,14 @@ clock_sync_s = 0.5
     assert sum(e.type == "pong" for e in events) == 3
     last = list(read_events(day2))[-1]
     assert (last.machine, last.payload.kind) == ("brain", "shutdown")
+
+
+def test_llm_is_unreachable_from_outside_and_pinned():
+    # vLLM's API has no auth: it must never be published on the host, and the
+    # brain must not wait for it (the link comes up while the model loads).
+    cfg = json.loads(compose(os.environ, "config", "--format", "json").stdout)
+    llm, brain = cfg["services"]["llm"], cfg["services"]["brain"]
+    assert not llm.get("ports")
+    assert "@sha256:" in llm["image"]
+    assert "--revision=851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a" in llm["command"]
+    assert "llm" not in brain.get("depends_on", {})

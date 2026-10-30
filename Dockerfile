@@ -1,6 +1,6 @@
 # The brain's container (portability rule 3): the same image runs on Windows
 # (Docker Desktop, WSL2 backend), on this Mac for testing, and on cloud Linux.
-# CPU-only for M0; M1 switches the base to a CUDA image for the LLM server.
+# CPU-only: the LLM runs in vLLM's own image (the `llm` service in compose.yaml).
 
 FROM python:3.12-slim-bookworm
 

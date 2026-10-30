@@ -32,7 +32,8 @@ jason/
   body/main.py      body role (M0: pinger)
   brain/main.py     brain role (M0: ping responder)
 config/body.toml, config/brain.toml  one config per role (committed, no secrets)
-Dockerfile, compose.yaml             the brain's container
+Dockerfile, compose.yaml             the brain's container (CPU-only) and the `llm` service (vLLM, GPU, no published port)
+scripts/llm_check.py                 checks the LLM from inside the brain container
 tests/                               pytest; test_container.py is opt-in
 ```
 
@@ -53,7 +54,8 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 - Install: `uv sync` (uv installs Python 3.12 and the locked dependencies into `.venv/`)
 - Tests: `uv run pytest` (strict: `uv run pytest -W error`; container test: `JASON_DOCKER_TESTS=1 uv run pytest tests/test_container.py`)
 - Token (once): `uv run jason gen-token`, then copy `~/jason-data/link_token` to the other machine
-- Run the brain: `docker compose up --build -d` (logs: `docker compose logs -f brain`; stop: `docker compose down`). `config/brain.toml` uses the container's paths, so outside Docker pass a config with local paths
+- Run the brain: `docker compose up --build -d` starts the brain and the LLM (logs: `docker compose logs -f brain` or `llm`; stop: `docker compose down`). The LLM needs the NVIDIA GPU, so on the Mac start only the brain: `docker compose up --build -d brain`. `config/brain.toml` uses the container's paths, so outside Docker pass a config with local paths
+- Check the LLM (brain machine): `docker compose exec -T brain python - < scripts/llm_check.py`
 - Run the body (on the Mac): `uv run jason run --role body` (`--count N` to stop after N pings)
 - New day (until sleep exists): `docker compose exec brain jason new-day`
 - Without `--config`, commands use `config/<role>.toml`
