@@ -113,6 +113,12 @@ def trim(samples: np.ndarray, sample_rate: int, text: str, cfg: TtsConfig) -> np
     return np.concatenate([samples[start:stop], gap])
 
 
+def speakable(text: str) -> str:
+    """Drop markdown emphasis the model sometimes writes despite the persona
+    (*The Royal Tenenbaums*), so it is never read out."""
+    return " ".join(text.replace("*", "").replace("_", "").split())
+
+
 def heard_text(clauses: list[tuple[str, int]], played: int) -> str:
     """What was heard of clauses [(text, samples at 48 kHz)] when `played`
     samples had reached the speaker: whole clauses, then the share of the
@@ -200,7 +206,8 @@ class Speaker:
             return  # the user interrupted: the rest of this reply goes unsaid
         reply.last_received = reply.last_received or p.last
 
-        text = f"{reply.held} {p.text}".strip() if reply.held else p.text.strip()
+        clause = speakable(p.text)
+        text = f"{reply.held} {clause}".strip() if reply.held else clause
         reply.held = ""
         short = len(text.split()) < self.cfg.min_words
         if text and short and p.index > 0 and not p.last:

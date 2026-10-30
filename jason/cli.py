@@ -90,6 +90,9 @@ def main(argv: list[str] | None = None) -> None:
     with contextlib.suppress(AttributeError):
         sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # Kokoro's backup pronunciation step warns on unusual words ("Tenenbaums")
+    # though the audio is fine; keep it out of the conversation.
+    logging.getLogger("phonemizer").setLevel(logging.ERROR)
     try:
         if args.command == "run":
             _run(args)

@@ -13,7 +13,7 @@ np = pytest.importorskip("numpy")
 pytest.importorskip("soxr")
 
 from jason.body.audio import BLOCK, IO_SR, Playback  # noqa: E402
-from jason.body.tts import Speaker, heard_text, trim  # noqa: E402
+from jason.body.tts import Speaker, heard_text, speakable, trim  # noqa: E402
 from jason.core import events as ev  # noqa: E402
 from jason.core.bus import EventBus  # noqa: E402
 from jason.core.config import TtsConfig  # noqa: E402
@@ -287,3 +287,8 @@ def test_real_kokoro_speaks():
     elapsed = time.perf_counter() - t
     assert len(audio) / tts.sample_rate > 1.0  # about two seconds of speech
     assert elapsed < 1.0
+
+
+def test_markdown_emphasis_is_never_spoken():
+    assert speakable("How about *The Royal Tenenbaums* or _Up_?") == "How about The Royal Tenenbaums or Up?"
+    assert speakable("Plain words.") == "Plain words."
