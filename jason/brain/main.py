@@ -1,14 +1,16 @@
 """Brain-role entry point: `jason run --role brain`.
 
-In M0 the brain loads which day it is, accepts the body's link, and answers
-every ping from the body with a pong. Later milestones add the LLM, memory,
-learner and Wonder as more components on the same bus.
+The brain loads which day it is, accepts the body's link, answers every ping
+from the body with a pong, and (with an [llm] section in its config) writes
+Jason's replies. Later milestones add memory, the learner and Wonder as more
+components on the same bus.
 """
 
 import asyncio
 import contextlib
 from collections.abc import Callable
 
+from jason.brain.llm import LlmComponent
 from jason.core import clock
 from jason.core import events as ev
 from jason.core.bus import EventBus
@@ -45,6 +47,8 @@ class Brain:
         self.server = LinkServer(self.bus, self.cfg.link, token, commands={"new_day": self.new_day})
         await self.server.start()
         self._tasks.append(asyncio.create_task(ping_responder(self.bus)))
+        if self.cfg.llm is not None:
+            self._tasks.append(asyncio.create_task(LlmComponent(self.bus, self.cfg.llm).run()))
         self.bus.emit(
             ev.System,
             ev.SystemPayload(kind="startup", message="brain started", data={"day": state.day, "port": self.port}),

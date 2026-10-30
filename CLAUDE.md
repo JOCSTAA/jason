@@ -30,8 +30,10 @@ jason/
   net/clocksync.py  NTP-style clock offset and round trip
   net/admin.py      one-shot commands to a running brain (/admin)
   body/main.py      body role (M0: pinger)
-  brain/main.py     brain role (M0: ping responder)
+  brain/main.py     brain role: ping responder + LLM component
+  brain/llm.py      writes Jason's replies: prompt, vLLM stream, clauses, cancel
 config/body.toml, config/brain.toml  one config per role (committed, no secrets)
+config/persona.md                    Jason's system prompt (the brain's [llm] persona_file)
 Dockerfile, compose.yaml             the brain's container (CPU-only) and the `llm` service (vLLM, GPU, no published port)
 scripts/llm_check.py                 checks the LLM from inside the brain container
 tests/                               pytest; test_container.py is opt-in

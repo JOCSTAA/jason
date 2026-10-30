@@ -58,6 +58,16 @@ def test_committed_brain_config_loads():
     # Windows (no drive letter), "/state" becomes C:\state; still a /state folder.
     assert cfg.state_dir.as_posix().endswith("/state")
     assert cfg.link.listen_port == 8765
+    # The LLM is reached inside compose, and the persona sits next to the config.
+    assert cfg.llm.base_url == "http://llm:8000"
+    assert cfg.llm.persona_file == REPO_CONFIG.resolve() / "persona.md"
+    assert cfg.llm.persona_file.read_text(encoding="utf-8").strip()
+
+
+def test_brain_runs_without_an_llm_section(tmp_path):
+    path = tmp_path / "brain.toml"
+    path.write_text('role = "brain"\nmachine = "brain"\nstate_dir = "s"\n[link]\ntoken_file = "t"\n')
+    assert load_config(path, "brain").llm is None
 
 
 # --- paths ------------------------------------------------------------------

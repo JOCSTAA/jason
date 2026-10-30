@@ -12,3 +12,13 @@ listen_port = 8765
 token_file = "/secrets/link_token"
 heartbeat_s = 2.0
 timeout_s = 10.0
+
+[llm]
+base_url = "http://llm:8000"           # the llm service in compose.yaml (never published)
+model = "jason-llm"
+model_version = "Qwen/Qwen3.5-4B@851bf6e"  # change whenever the served weights change
+persona_file = "persona.md"            # next to this file
+history_turns = 20
+max_tokens = 256
+temperature = 0.7
+timeout_s = 10.0

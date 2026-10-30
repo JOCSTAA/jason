@@ -45,6 +45,21 @@ class BrainLink(_Strict):
     timeout_s: Seconds = 10.0
 
 
+class LlmConfig(_Strict):
+    """The brain's LLM component: where vLLM is and how to prompt it."""
+
+    base_url: Annotated[str, Field(pattern=r"^https?://")]  # vLLM's OpenAI-compatible server
+    model: str = "jason-llm"  # the --served-model-name
+    # Which weights answer, written into every agent_utterance so nightly
+    # training stays attributable. Change it whenever the served weights change.
+    model_version: str
+    persona_file: Path  # the system prompt (core blocks, design §8.1)
+    history_turns: Annotated[int, Field(ge=0)] = 20  # user + Jason turns kept in the prompt
+    max_tokens: Annotated[int, Field(gt=0)] = 256
+    temperature: Annotated[float, Field(ge=0.0, le=2.0)] = 0.7
+    timeout_s: Seconds = 10.0  # longest wait to connect or for the next streamed piece
+
+
 class BodyConfig(_Strict):
     role: Literal["body"]
     machine: MachineName
@@ -57,6 +72,7 @@ class BrainConfig(_Strict):
     machine: MachineName
     state_dir: Path
     link: BrainLink
+    llm: LlmConfig | None = None  # no [llm] section: the brain runs without an LLM (tests)
 
 
 Config = BodyConfig | BrainConfig
@@ -90,6 +106,9 @@ def load_config(path: Path, role: Literal["body", "brain"]) -> Config:
     link = raw.get("link", {})
     if "token_file" in link:
         link["token_file"] = _resolve(link["token_file"], base)
+    llm = raw.get("llm", {})
+    if "persona_file" in llm:
+        llm["persona_file"] = _resolve(llm["persona_file"], base)
     model = BodyConfig if role == "body" else BrainConfig
     return model.model_validate(raw)
 
