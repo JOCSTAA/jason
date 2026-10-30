@@ -11,16 +11,29 @@ SAMPLES: list[ev.Event] = [
     ev.UserPartial(**ENV, payload=ev.UserPartialPayload(utterance_id="u1", text="so I was")),
     ev.UserFinal(**ENV, payload=ev.UserFinalPayload(utterance_id="u1", text="so I was thinking")),
     ev.TurnEndProb(**ENV, payload=ev.TurnEndProbPayload(utterance_id="u1", prob=0.82)),
+    ev.SpeechStart(**ENV, payload=ev.SpeechStartPayload(utterance_id="u1", audio_ns=1_000, during_agent_speech=False)),
+    ev.SpeechEnd(**ENV, payload=ev.SpeechEndPayload(utterance_id="u1", audio_ns=2_000, speech_ms=1840.0)),
     ev.AgentAction(
         **ENV,
         payload=ev.AgentActionPayload(
             action=ev.Action.ASK,
             action_probs={ev.Action.ASK: 0.7, ev.Action.SILENT: 0.2, ev.Action.RESPOND: 0.1},
+            utterance_id="u1",
+            based_on_id="e17",
             policy_version="rules-0",
             features={"pause_ms": 640.0},
         ),
     ),
-    ev.AgentUtterance(**ENV, payload=ev.AgentUtterancePayload(action_id="a1", text="Why?")),
+    ev.AgentUtterance(
+        machine="brain", session_id="test-session",
+        payload=ev.AgentUtterancePayload(action_id="a1", text="Why?", complete=True, model_version="qwen3.5-4b@851bf6e"),
+    ),
+    ev.ReplyChunk(machine="brain", session_id="test-session", payload=ev.ReplyChunkPayload(action_id="a1", index=0, text="Why?", last=True)),
+    ev.ReplyCancel(**ENV, payload=ev.ReplyCancelPayload(action_id="a1", reason="barge_in")),
+    ev.ReplyHeard(
+        **ENV,
+        payload=ev.ReplyHeardPayload(action_id="a1", text="Wh", complete=False, played_ms=180.0, interrupted_by="u2"),
+    ),
     ev.Reaction(
         **ENV,
         payload=ev.ReactionPayload(
@@ -39,7 +52,7 @@ SAMPLES: list[ev.Event] = [
             action_id="a1", predicted_utterance="Because...", predicted_polarity=0.4
         ),
     ),
-    ev.LatencyMark(**ENV, payload=ev.LatencyMarkPayload(stage="network_rtt", duration_ns=4_200_000)),
+    ev.LatencyMark(**ENV, payload=ev.LatencyMarkPayload(stage=ev.LatencyStage.FIRST_AUDIO, duration_ns=640_000_000)),
     ev.System(**ENV, payload=ev.SystemPayload(kind="startup", data={"pid": 123})),
     ev.Ping(**ENV, payload=ev.PingPayload(seq=1)),
     ev.Pong(
@@ -122,8 +135,8 @@ def test_empty_machine_rejected():
 # --- schema 2 -------------------------------------------------------------------
 
 
-def test_schema_version_is_2():
-    assert ev.SCHEMA_VERSION == 2
+def test_schema_version_is_3():
+    assert ev.SCHEMA_VERSION == 3
 
 
 def test_seq_and_run_id_default_to_none_and_round_trip():
@@ -176,6 +189,49 @@ def test_action_probs_is_required():
 
 
 def test_action_probs_keys_round_trip_as_actions():
-    e = SAMPLES[3]
+    e = next(s for s in SAMPLES if s.type == "agent_action")
     restored = ev.from_json(ev.to_json(e))
     assert all(isinstance(k, ev.Action) for k in restored.payload.action_probs)
+
+
+# --- schema 3 -------------------------------------------------------------------
+
+
+def test_turn_end_prob_needs_its_utterance():
+    with pytest.raises(ValidationError):
+        ev.TurnEndProbPayload(prob=0.5)
+
+
+def test_agent_action_may_point_at_no_user_speech():
+    # Jason speaking first: nothing to point at.
+    p = ev.AgentActionPayload(action=ev.Action.ASK, action_probs={ev.Action.ASK: 1.0})
+    assert (p.utterance_id, p.based_on_id) == (None, None)
+
+
+def test_agent_utterance_must_say_whether_it_finished():
+    with pytest.raises(ValidationError):
+        ev.AgentUtterancePayload(action_id="a1", text="Why?")
+
+
+def test_latency_stage_is_a_fixed_list():
+    with pytest.raises(ValidationError):
+        ev.LatencyMarkPayload(stage="first_audoi", duration_ns=1)
+    # The string form still works, so callers can pass plain names.
+    assert ev.LatencyMarkPayload(stage="ping_rtt", duration_ns=1).stage is ev.LatencyStage.PING_RTT
+
+
+def test_schema_2_latency_marks_still_read():
+    # M0 logs hold network_rtt and ping_rtt marks with free-text stages.
+    line = json.loads(ev.to_json(ev.LatencyMark(**ENV, payload=ev.LatencyMarkPayload(stage="network_rtt", duration_ns=5))))
+    line["schema_version"] = 2
+    restored = ev.from_json(json.dumps(line))
+    assert restored.payload.stage is ev.LatencyStage.NETWORK_RTT
+
+
+def test_negative_amounts_rejected():
+    with pytest.raises(ValidationError):
+        ev.SpeechEndPayload(utterance_id="u1", audio_ns=1, speech_ms=-1.0)
+    with pytest.raises(ValidationError):
+        ev.ReplyHeardPayload(action_id="a1", text="", complete=False, played_ms=-1.0)
+    with pytest.raises(ValidationError):
+        ev.ReplyChunkPayload(action_id="a1", index=-1, text="x", last=True)

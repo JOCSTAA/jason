@@ -1,6 +1,6 @@
 # Jason — Design Doc
 
-_Last updated: 2026-10-30 (v2.9: the audio side is the portable `body` role, the Mac today; the body's audio stack decided, see `spikes/m1-mac-audio.md`)_
+_Last updated: 2026-10-30 (v2.10: interjections: the brain offers, the body decides (§9); event schema 3 for the voice loop)_
 
 Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
@@ -395,9 +395,10 @@ Neutral but important facts (no reaction) are protected by the use and explicit-
 ## 9. Proactivity and turn-taking [Decided]
 
 - **Cascaded pipeline** (STT → LLM → TTS) plus an always-running **floor controller** choosing the §4 actions every ~100–200 ms.
-- Floor-controller inputs: VAD state, pause length, Smart Turn end-of-turn probability, streaming partial transcript, pending question queue (from curiosity), recent reactions, time since Jason last spoke.
+- Floor-controller inputs: VAD state, pause length, Smart Turn end-of-turn probability, streaming partial transcript, pending offers from the brain (below; includes curiosity's questions), recent reactions, time since Jason last spoke.
+- **Interjecting: the brain offers, the body decides [Decided: approach; details in M5].** Jason doesn't wait for the end of the user's turn to think. The brain reads every partial transcript as it arrives, judges whether it has something worth saying (an answer, a correction, a question), and drafts it; predicting how the user's sentence ends is a Wonder-style job (§6.1). It sends the body an **offer** (the draft plus an estimate of its value), which becomes one more floor-controller input. The floor controller alone decides whether to `interject`, keep listening, or wait for the turn to end. One decider for the floor avoids collisions (the brain interjecting as the body decides to answer), keeps credit assignment clean, and keeps every speaking decision's probabilities in one log for learning (M4); the body is also where timing is exact. Every `agent_action` records the exact partial or final transcript it reacted to (`based_on_id`, schema 3), so mid-sentence decisions are traceable. Rollout: M1 only keeps the LLM's prompt cache warm with the partial transcript; M3 can log offers without acting on them, to score them against what the user went on to say; M5 makes offers a controller input and turns `interject` on.
 - Start rule-based (thresholds), then replace with a learned contextual bandit. Research (Microsoft RESPOND, 2026) exposes "backchannel intensity" and "turn-claim aggressiveness" as dials, which are natural knobs for the policy to learn per context.
-- **Barge-in:** if the user speaks while Jason talks, stop TTS within ~200 ms and log a mild negative for the interrupted action.
+- **Barge-in:** if the user speaks while Jason talks, stop TTS within ~200 ms, stop generating, and log what the user actually heard (`reply_heard`); the mild negative for the interrupted action is derived from that record (M3). Reactions and corrections are judged against the heard text, not the full reply.
 - **Self-hearing:** echo cancellation on the body (WebRTC AEC3, with what Jason plays as the reference). In the M1 spike no echo lingered after Jason stopped, so the mic stays open while he speaks (which barge-in needs); muting the mic is only a fallback.
 - Rate limits on `interject` and `ask` as a safety net while the policy is young.
 - Full-duplex speech-to-speech models (PersonaPlex/Moshi) are not used for now: no text-level hooks for memory and learning. Revisit if that changes.

@@ -5,13 +5,19 @@ schema version) and a typed payload. Events are immutable facts: once
 created they are never edited, which is what lets the raw log be replayed and
 re-scored later.
 
-Payloads are stubs sized for M0; later milestones add fields. Any change to a
+Payloads grow milestone by milestone (the voice loop's are M1's; reaction,
+reward and wonder_prediction are still stubs). Any change to a
 payload's meaning bumps SCHEMA_VERSION so old log lines stay interpretable.
 
 Version history:
   1  M0.
   2  Envelope gains seq and run_id (stamped by the bus); agent_action gains the
      required action_probs.
+  3  M1 voice loop. New: speech_start, speech_end, reply_chunk, reply_cancel,
+     reply_heard. turn_end_prob.utterance_id is required; agent_action gains
+     utterance_id and based_on_id; agent_utterance gains the required
+     complete and model_version; latency_mark.stage is a fixed list (the old
+     free-text values network_rtt and ping_rtt are on it, so older logs read).
 """
 
 import math
@@ -23,7 +29,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, m
 
 from jason.core import clock
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class _Frozen(BaseModel):
@@ -84,8 +90,33 @@ class UserFinalPayload(Payload):
 
 
 class TurnEndProbPayload(Payload):
-    utterance_id: str | None = None
+    utterance_id: str
     prob: Probability
+
+
+class SpeechStartPayload(Payload):
+    """The VAD heard the user start (or resume) speaking."""
+
+    # One utterance is one user turn. A pause doesn't end it: if the user
+    # carries on, the next speech_start reuses the same id.
+    utterance_id: str
+    # When the first voiced frame was captured (the body's monotonic clock).
+    # The event itself is created later, after buffering and the VAD, so its
+    # own timestamp would make every latency look shorter than the user felt.
+    audio_ns: int
+    # Jason was talking at the time: a possible barge-in.
+    during_agent_speech: bool
+
+
+class SpeechEndPayload(Payload):
+    """The VAD heard the user pause. Not necessarily the end of the turn:
+    whether the turn is over is the floor controller's call."""
+
+    utterance_id: str
+    # When the last voiced frame ended (the body's monotonic clock). Time to
+    # first audio is measured from here (M1 exit criterion).
+    audio_ns: int
+    speech_ms: Annotated[float, Field(ge=0.0)]  # length of the stretch of speech that just ended
 
 
 class AgentActionPayload(Payload):
@@ -95,6 +126,13 @@ class AgentActionPayload(Payload):
     # Off-policy evaluation and unbiased retraining from logs (M4, sleep) need
     # the chosen action's probability; the rest of the distribution helps too.
     action_probs: dict[Action, Probability]
+    # The user turn this decision belongs to, and the exact user_partial or
+    # user_final event it saw. A reply or interjection made mid-sentence is
+    # then traceable to the words it reacted to, which a reaction judge (M3)
+    # and the learner (M4) need. None when there's no user speech to point at
+    # (e.g. Jason speaking first).
+    utterance_id: str | None = None
+    based_on_id: str | None = None
     policy_version: str | None = None
     # Inputs the policy saw when it chose. Logged with every decision so the
     # learner can replay "what did it know, what did it do, what happened".
@@ -111,8 +149,50 @@ class AgentActionPayload(Payload):
 
 
 class AgentUtterancePayload(Payload):
+    """The whole reply as generated, logged once when generation stops. What
+    the user actually heard is in reply_heard."""
+
     action_id: str  # the agent_action event this utterance carries out
     text: str
+    complete: bool  # False when generation was cancelled (e.g. barge-in)
+    # Which weights wrote it. Nightly training changes the weights, so every
+    # reply must say which version produced it for learning to be attributable.
+    model_version: str | None = None
+
+
+class ReplyChunkPayload(Payload):
+    """One clause of a reply, sent as soon as it's generated so speech can
+    start before the whole reply exists. Clauses, not tokens: one event per
+    token would be ~60 a second in both raw logs and over the link."""
+
+    action_id: str
+    index: Annotated[int, Field(ge=0)]  # 0, 1, 2, ... within the reply
+    text: str
+    last: bool  # no more chunks follow for this reply
+
+
+class ReplyCancelPayload(Payload):
+    """Asks the brain to stop generating a reply. An event, not a direct
+    call, because components only talk through the bus."""
+
+    action_id: str
+    reason: str  # e.g. "barge_in"
+
+
+class ReplyHeardPayload(Payload):
+    """What the user actually heard of a reply, sent when playback ends.
+
+    After a barge-in this is shorter than the generated reply; reactions and
+    corrections (M3) and training pairs (M8) are judged against this text,
+    not the full reply. A reply with interrupted_by set is the barge-in
+    record, from which M3 derives the barge-in penalty (design §9).
+    """
+
+    action_id: str
+    text: str
+    complete: bool  # the whole reply was played
+    played_ms: Annotated[float, Field(ge=0.0)]
+    interrupted_by: str | None = None  # the utterance_id that cut it off
 
 
 class ReactionPayload(Payload):
@@ -142,8 +222,22 @@ class WonderPredictionPayload(Payload):
     wonder_version: str | None = None
 
 
+class LatencyStage(StrEnum):
+    """Every stage that logs a latency. A fixed list, so a misspelled stage is
+    an error instead of a silently separate stage in the reports."""
+
+    NETWORK_RTT = "network_rtt"  # body↔brain round trip (clock-sync probes)
+    PING_RTT = "ping_rtt"  # M0 pinger: ping published → pong received, bus to bus
+    TURN_DECISION = "turn_decision"  # user stopped speaking → floor controller chose to respond
+    STT_FINAL = "stt_final"  # final transcription call
+    LLM_FIRST_TOKEN = "llm_first_token"  # request sent → first token back
+    FIRST_CLAUSE = "first_clause"  # request sent → first reply_chunk ready
+    TTS_FIRST_CHUNK = "tts_first_chunk"  # clause received → first audio synthesized
+    FIRST_AUDIO = "first_audio"  # user's last voiced frame → first reply sample at the speaker
+
+
 class LatencyMarkPayload(Payload):
-    stage: str  # e.g. "stt", "llm_first_token", "network_rtt"
+    stage: LatencyStage
     duration_ns: Annotated[int, Field(ge=0)]
     ref_id: str | None = None  # the event this measurement belongs to
 
@@ -186,6 +280,16 @@ class TurnEndProb(Event):
     payload: TurnEndProbPayload
 
 
+class SpeechStart(Event):
+    type: Literal["speech_start"] = "speech_start"
+    payload: SpeechStartPayload
+
+
+class SpeechEnd(Event):
+    type: Literal["speech_end"] = "speech_end"
+    payload: SpeechEndPayload
+
+
 class AgentAction(Event):
     type: Literal["agent_action"] = "agent_action"
     payload: AgentActionPayload
@@ -194,6 +298,21 @@ class AgentAction(Event):
 class AgentUtterance(Event):
     type: Literal["agent_utterance"] = "agent_utterance"
     payload: AgentUtterancePayload
+
+
+class ReplyChunk(Event):
+    type: Literal["reply_chunk"] = "reply_chunk"
+    payload: ReplyChunkPayload
+
+
+class ReplyCancel(Event):
+    type: Literal["reply_cancel"] = "reply_cancel"
+    payload: ReplyCancelPayload
+
+
+class ReplyHeard(Event):
+    type: Literal["reply_heard"] = "reply_heard"
+    payload: ReplyHeardPayload
 
 
 class Reaction(Event):
@@ -235,8 +354,13 @@ EVENT_CLASSES: tuple[type[Event], ...] = (
     UserPartial,
     UserFinal,
     TurnEndProb,
+    SpeechStart,
+    SpeechEnd,
     AgentAction,
     AgentUtterance,
+    ReplyChunk,
+    ReplyCancel,
+    ReplyHeard,
     Reaction,
     Reward,
     WonderPrediction,
@@ -252,8 +376,13 @@ AnyEvent = Annotated[
     UserPartial
     | UserFinal
     | TurnEndProb
+    | SpeechStart
+    | SpeechEnd
     | AgentAction
     | AgentUtterance
+    | ReplyChunk
+    | ReplyCancel
+    | ReplyHeard
     | Reaction
     | Reward
     | WonderPrediction
