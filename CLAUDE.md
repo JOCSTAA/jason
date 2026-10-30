@@ -36,7 +36,7 @@ jason/
   body/listen.py    Silero VAD → speech_start/speech_end; Smart Turn at each pause → turn_end_prob
   body/turn.py      Smart Turn model + Whisper log-mel features in numpy
   body/stt.py       speech-to-text: swappable backend (Parakeet on MLX); partials while speaking, a final at every pause
-  body/tts.py       text-to-speech: swappable backend (Kokoro on MLX); reply clauses → speaker, reply_heard when played
+  body/tts.py       text-to-speech: swappable backend (Kokoro on MLX); reply clauses → speaker, reply_heard when played; barge-in
   body/floor.py     floor controller (rules-1): when Jason answers; logs decisions with features, turn_decision, first_audio
   body/voice.py     the spoken conversation: starts every body component (`jason run --role body`)
   brain/main.py     brain role: ping responder + LLM component

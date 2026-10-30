@@ -4,6 +4,7 @@
                          └► Transcriber ─► user_partial / user_final
     floor controller ─► agent_action (respond) ─► brain ─► reply_chunk
     Speaker ─► AudioIO ─► speaker ─► reply_heard
+    you talk over Jason ─► Speaker stops him (barge-in) ─► reply_cancel, reply_heard
 
 Every part talks through the bus, except the sound itself, which goes
 between AudioIO and the parts that read or write samples (decision
@@ -64,5 +65,7 @@ async def _print_conversation(bus: EventBus, out: Callable[[str], None]) -> None
                 out(f"jason> {p.text}")
             elif isinstance(e, ev.LatencyMark) and p.stage is ev.LatencyStage.FIRST_AUDIO:
                 out(f"[first audio {p.duration_ns / 1e6:.0f} ms after you stopped]")
+            elif isinstance(e, ev.LatencyMark) and p.stage is ev.LatencyStage.BARGE_IN:
+                out(f"[you cut in: Jason stopped {p.duration_ns / 1e6:.0f} ms after you started]")
             elif isinstance(e, ev.System) and p.kind == "llm_error":
                 out(f"[brain: {p.message}]")

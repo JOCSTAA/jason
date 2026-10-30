@@ -13,7 +13,7 @@ np = pytest.importorskip("numpy")
 pytest.importorskip("soxr")
 
 from jason.body.audio import BLOCK, IO_SR, Playback  # noqa: E402
-from jason.body.tts import Speaker, trim  # noqa: E402
+from jason.body.tts import Speaker, heard_text, trim  # noqa: E402
 from jason.core import events as ev  # noqa: E402
 from jason.core.bus import EventBus  # noqa: E402
 from jason.core.config import TtsConfig  # noqa: E402
@@ -59,7 +59,7 @@ class FakeAudio:
 async def setup(tmp_path):
     rawlog = RawLog(tmp_path, "mac")
     bus = EventBus("mac", rawlog, session_id=SESSION)
-    out = bus.subscribe(ev.LatencyMark, ev.ReplyHeard)
+    out = bus.subscribe(ev.LatencyMark, ev.ReplyHeard, ev.ReplyCancel)
     audio, backend = FakeAudio(), FakeBackend()
     # No added pauses, so the audio lengths below are exact (trim() is tested on its own).
     speaker = Speaker(bus, audio, backend, TtsConfig(lead_ms=0, pause_comma_ms=0, pause_sentence_ms=0, pause_other_ms=0))
@@ -148,6 +148,100 @@ async def test_synthesis_runs_on_one_thread(setup):
         chunk(bus, "a1", i, f"Clause number {i} here,", last=i == 3)
     await settle()
     assert len(backend.threads) == 1 and next(iter(backend.threads)).startswith("tts")
+
+
+# --- barge-in -------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("played,heard", [
+    (0, ""),
+    (300, ""),  # under a word's worth of the first clause
+    (1000, "Nice one,"),  # exactly the first clause
+    (1000 + 1200, "Nice one, sounds like you've"),  # 40% of an 8-word clause: 3 words
+    (1000 + 3000 + 50, "Nice one, sounds like you've got some serious work ahead."),
+])
+def test_heard_text_is_whole_clauses_then_the_share_of_the_cut_one(played, heard):
+    clauses = [("Nice one,", 1000), ("sounds like you've got some serious work ahead.", 3000)]
+    assert heard_text(clauses, played) == heard
+
+
+def interrupt(bus, uid="u2"):
+    bus.publish(ev.SpeechStart(machine="mac", session_id=SESSION, payload=ev.SpeechStartPayload(
+        utterance_id=uid, audio_ns=time.monotonic_ns() - 100_000_000, during_agent_speech=True)))
+
+
+def respond_decision(bus):
+    return bus.emit(ev.AgentAction, ev.AgentActionPayload(action=ev.Action.RESPOND, action_probs={ev.Action.RESPOND: 1.0}))
+
+
+def drain(out):
+    items = []
+    while not out._queue.empty():
+        items.append(out._queue.get_nowait())
+    return items
+
+
+async def test_talking_over_jason_stops_him_and_logs_what_was_heard(setup):
+    bus, audio, backend, out = setup
+    chunk(bus, "a1", 0, "Sure thing,")  # 2 blocks of audio
+    chunk(bus, "a1", 1, "I can help with that today.", last=True)  # 6 blocks
+    await settle()
+    drain(out)
+    audio.tick(2 + 3)  # all of clause 1, half of clause 2
+    interrupt(bus)
+    await settle()
+    events = drain(out)
+    [cancel] = [e for e in events if isinstance(e, ev.ReplyCancel)]
+    [heard] = [e for e in events if isinstance(e, ev.ReplyHeard)]
+    [mark] = [e for e in events if isinstance(e, ev.LatencyMark)]
+    assert (cancel.payload.action_id, cancel.payload.reason) == ("a1", "barge_in")
+    assert heard.payload.text == "Sure thing, I can help"  # half of a 6-word clause: 3 words
+    assert (heard.payload.complete, heard.payload.interrupted_by) == (False, "u2")
+    assert heard.payload.played_ms == pytest.approx(50.0)
+    assert mark.payload.stage is ev.LatencyStage.BARGE_IN and mark.payload.duration_ns >= 100_000_000
+    assert not audio.playback.busy  # silent at once
+
+
+async def test_he_also_stops_while_waiting_for_the_brains_next_clause(setup):
+    bus, audio, backend, out = setup
+    chunk(bus, "a1", 0, "Sure thing,")  # more is coming, but not yet
+    await settle()
+    audio.tick(5)  # everything so far has played
+    drain(out)
+    interrupt(bus)
+    await settle()
+    assert any(isinstance(e, ev.ReplyCancel) for e in drain(out))
+    chunk(bus, "a1", 1, "I can help with that.", last=True)  # arrives too late
+    await settle()
+    assert backend.texts == ["Sure thing,"]
+
+
+async def test_talking_before_his_first_clause_cancels_the_reply(setup):
+    bus, audio, backend, out = setup
+    decision = respond_decision(bus)
+    await settle()
+    interrupt(bus)
+    await settle()
+    events = drain(out)
+    [cancel] = [e for e in events if isinstance(e, ev.ReplyCancel)]
+    [heard] = [e for e in events if isinstance(e, ev.ReplyHeard)]
+    assert cancel.payload.action_id == decision.id
+    assert (heard.payload.text, heard.payload.played_ms) == ("", 0.0)
+    chunk(bus, decision.id, 0, "Sure thing,", last=True)  # the brain had already sent one
+    await settle()
+    assert backend.texts == []
+
+
+async def test_talking_after_he_has_finished_changes_nothing(setup):
+    bus, audio, backend, out = setup
+    chunk(bus, "a1", 0, "All done.", last=True)
+    await settle()
+    audio.tick(5)
+    await settle()
+    drain(out)
+    interrupt(bus)
+    await settle()
+    assert not any(isinstance(e, ev.ReplyCancel) for e in drain(out))
 
 
 # --- trimming Kokoro's padding ------------------------------------------------------

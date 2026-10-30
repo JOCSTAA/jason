@@ -18,6 +18,7 @@ Version history:
      utterance_id and based_on_id; agent_utterance gains the required
      complete and model_version; latency_mark.stage is a fixed list (the old
      free-text values network_rtt and ping_rtt are on it, so older logs read).
+  4  latency_mark.stage gains barge_in (M1 step 12).
 """
 
 import math
@@ -29,7 +30,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, m
 
 from jason.core import clock
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class _Frozen(BaseModel):
@@ -238,6 +239,7 @@ class LatencyStage(StrEnum):
     FIRST_CLAUSE = "first_clause"  # request sent → first reply_chunk ready
     TTS_FIRST_CHUNK = "tts_first_chunk"  # clause received → first audio synthesized
     FIRST_AUDIO = "first_audio"  # user's last voiced frame → first reply sample at the speaker
+    BARGE_IN = "barge_in"  # user's first voiced sound over Jason → Jason's playback stopped
 
 
 class LatencyMarkPayload(Payload):
