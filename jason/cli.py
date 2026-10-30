@@ -1,6 +1,6 @@
 """Command-line entry point.
 
-    jason run --role body|brain [--config PATH] [--count N] [--every S]
+    jason run --role body|brain [--config PATH] [--count N] [--every S] [--text]
     jason new-day [--role brain|body] [--config PATH]
     jason sleep [--config PATH]
     jason gen-token [--file PATH] [--force]
@@ -48,6 +48,7 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--config", type=Path, help="TOML config (default: config/<role>.toml)")
     run.add_argument("--count", type=int, help="body only: stop after this many pings")
     run.add_argument("--every", type=float, default=5.0, help="body only: seconds between pings")
+    run.add_argument("--text", action="store_true", help="body only: chat with Jason by typing (no audio)")
 
     new_day = sub.add_parser("new-day", help="end today's session and start the next")
     new_day.add_argument("--role", choices=["brain", "body"], default="brain",
@@ -110,7 +111,7 @@ def _run(args: argparse.Namespace) -> None:
     else:
         from jason.body.main import run_body
 
-        asyncio.run(_until_stopped(run_body(cfg, count=args.count, every_s=args.every)))
+        asyncio.run(_until_stopped(run_body(cfg, count=args.count, every_s=args.every, text=args.text)))
 
 
 def _new_day(args: argparse.Namespace) -> None:

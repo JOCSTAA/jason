@@ -1,15 +1,16 @@
 """Body-role entry point: `jason run --role body`.
 
-In M0 the body connects to the brain and sends a ping every few seconds,
-printing the round trip. Later milestones replace the pinger with the
-microphone, speech-to-text, the floor controller and text-to-speech.
+The body connects to the brain and either sends a ping every few seconds,
+printing the round trip, or (with --text) runs text-only chat. Later M1 steps
+add the microphone, speech-to-text, the floor controller and text-to-speech.
 """
 
 import asyncio
 import contextlib
 import math
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
+from jason.body.text import read_stdin, text_chat
 from jason.core import clock
 from jason.core import events as ev
 from jason.core.bus import EventBus, Subscription
@@ -101,8 +102,11 @@ async def run_body(
     count: int | None = None,
     every_s: float = 5.0,
     out: Callable[[str], None] = print,
+    text: bool = False,
+    read_line: Callable[[str], Awaitable[str | None]] = read_stdin,
 ) -> list[float]:
-    """Run until cancelled, or until `count` pings have been answered.
+    """Run until cancelled, or until `count` pings have been answered, or (with
+    text=True) until the text chat ends.
 
     Raises LinkAuthError / LinkVersionError if the brain can't be talked to.
     """
@@ -119,6 +123,9 @@ async def run_body(
             await client.ready.wait()
             out(f"connected; session {bus.session_id}")
             bus.emit(ev.System, ev.SystemPayload(kind="startup", message="body started"))
+            if text:
+                await text_chat(bus, read_line, out)
+                return []
             return await pinger(bus, client, count, every_s, out, rtts, offsets_ms)
 
         work = asyncio.create_task(main())

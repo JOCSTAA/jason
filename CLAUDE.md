@@ -29,7 +29,8 @@ jason/
   net/protocol.py   messages on the wire; PROTOCOL_VERSION
   net/clocksync.py  NTP-style clock offset and round trip
   net/admin.py      one-shot commands to a running brain (/admin)
-  body/main.py      body role (M0: pinger)
+  body/main.py      body role: pinger, or text chat with --text
+  body/text.py      text-only mode: a typed line stands in for STT + floor controller
   brain/main.py     brain role: ping responder + LLM component
   brain/llm.py      writes Jason's replies: prompt, vLLM stream, clauses, cancel
 config/body.toml, config/brain.toml  one config per role (committed, no secrets)
@@ -58,7 +59,7 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 - Token (once): `uv run jason gen-token`, then copy `~/jason-data/link_token` to the other machine
 - Run the brain: `docker compose up --build -d` starts the brain and the LLM (logs: `docker compose logs -f brain` or `llm`; stop: `docker compose down`). The LLM needs the NVIDIA GPU, so on the Mac start only the brain: `docker compose up --build -d brain`. `config/brain.toml` uses the container's paths, so outside Docker pass a config with local paths
 - Check the LLM (brain machine): `docker compose exec -T brain python - < scripts/llm_check.py`
-- Run the body (on the Mac): `uv run jason run --role body` (`--count N` to stop after N pings)
+- Run the body (on the Mac): `uv run jason run --role body` (`--count N` to stop after N pings); `--text` to chat with Jason by typing (no audio)
 - New day (until sleep exists): `docker compose exec brain jason new-day`
 - Without `--config`, commands use `config/<role>.toml`
 
