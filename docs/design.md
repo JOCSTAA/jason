@@ -1,6 +1,6 @@
 # Jason — Design Doc
 
-_Last updated: 2026-10-30 (v2.14: §9 M1 drafts replies at each pause, the first half of "the brain offers, the body decides")_
+_Last updated: 2026-10-30 (v2.15: M1 complete: §10 measured latencies, §13 M1 done, §16 M1 docs)_
 
 Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
@@ -83,7 +83,7 @@ Every model in the agent, where it runs, what it does, and how (or whether) it i
 | 2 | **Smart Turn v3.2** (~8M params) | Body (CPU, `onnxruntime`) | Probability that the user has finished their turn; input to the floor controller | Pretrained; frozen | [Decided] |
 | 3 | **Parakeet TDT 0.6B v3** | Body (Mac: MLX) | Speech-to-text, re-transcribing the whole utterance as it grows (its streaming mode is slower than real time) | Pretrained; frozen | [Decided]; backend swappable for a non-Mac body |
 | 4 | **Kokoro-82M** | Body (Mac: MLX) | Text-to-speech | Pretrained; frozen. Later swap to Chatterbox or Cartesia | [Decided]; backend swappable for a non-Mac body |
-| 5 | **Floor-controller policy** (contextual bandit; small actor-critic later) | Acts on the body; learner on the brain | Chooses silent / backchannel / respond / interject / ask / `think()` | Starts rule-based. Then learned from scratch: **updated live after each attributed reward**; retrained during sleep on real replay (plus dreams from M9); behind the frozen/learner swap and eval gate. Validated on the simulated user first | Approach [Decided]; library [Open] (Vowpal Wabbit or small PyTorch) |
+| 5 | **Floor-controller policy** (contextual bandit; small actor-critic later) | Acts on the body; learner on the brain | Chooses silent / backchannel / respond / interject / ask / `think()` | Starts rule-based (M1: `rules-2`, waits 200 ms / 700 ms / 1.5 s by Smart Turn's probability, longer after a sentence fragment). Then learned from scratch: **updated live after each attributed reward**; retrained during sleep on real replay (plus dreams from M9); behind the frozen/learner swap and eval gate. Validated on the simulated user first | Approach [Decided]; library [Open] (Vowpal Wabbit or small PyTorch) |
 | 6 | **Qwen3.5-4B (bf16) + one LoRA, merged nightly** | Windows 4090 | Main LLM: generates what Jason says. Also the default host for models 7 and 9 until they get their own | Base weights frozen. **Only the LoRA trains, during sleep**: context distillation + DPO on corrections, with replay; only with ≥ ~200 new labeled examples and a passed eval gate; merged into the weights and served from them next morning (no LoRA at serving time) | [Decided]; served by vLLM, bf16 |
 | 7 | **Reaction judge** | Windows (if local) | Classifies each user utterance: is it feedback, which action it targets, polarity, strength (§5.3 B) | Live labels are re-scored nightly by model 10; those re-scored labels can later train a dedicated small classifier | [Open] (needed by M3): the live LLM with a prompt, or a small separate classifier |
 | 8 | **Embedding model** | Windows | Turns memory entries and queries into vectors for long-term memory search (§8.4) | Pretrained; frozen. Changing it means re-embedding the whole store | [Open] (needed by M2) |
@@ -410,6 +410,8 @@ Neutral but important facts (no reaction) are protected by the use and explicit-
 - Target under ~1 s to first audio. Expected budget: turn decision 200–300 ms + STT 50–100 ms + LLM first token 100–200 ms + TTS first chunk 50–200 ms + network ~10 ms median, ~45 ms p99 (measured over Tailscale, `spikes/m0-link-latency.md`) ≈ 0.5–0.8 s.
 - Can be interrupted (barge-in).
 - Per-stage latency logged from day one.
+- **Time to first audio** is measured from the user's last voiced sound to the first sample of Jason's reply at the speaker, so it includes the floor controller's wait for the user to finish (`first_audio`; `jason latency` prints the breakdown).
+- **Measured at the end of M1 (2026-10-30, M5 Air body, 4090 Laptop brain over Tailscale), one 20-turn conversation:** median first audio **730 ms**; on a quick turn about 300 ms to decide (200 ms pause + ~90 ms transcript), ~135 ms to the LLM's first token, ~220 ms to the first clause, ~150 ms of text-to-speech and ~40 ms of network and buffers. Turns where the user trailed off wait 700 ms or 1.5 s by design. Barge-in: Jason stops ~90–100 ms after the user starts talking.
 - **Keep the GPU awake during a conversation [Decided].** On the 4090 Laptop vLLM's first token takes ~40 ms while the GPU is busy but ~380 ms after 2 s or more idle; it falls asleep within 1–2 s (`scripts/llm_latency_probe.py`). While the user has shown any sign of activity in the last 60 s, the brain sends vLLM a one-token request every 0.75 s (skipped while a reply is generating). It's about the GPU's power state, not the prompt cache. Both settings live in the brain's `[llm]` config; 0 turns it off for hardware that doesn't idle like this.
 
 ---
@@ -470,7 +472,7 @@ Each milestone has a measurable exit criterion.
 | # | Milestone | Scope | Exit criterion |
 |---|---|---|---|
 | **M0** | Setup | Repo layout, CLAUDE.md, pinned environment (both machines), event schema, raw logging, LAN link; follows the §3.4 portability rules (configurable brain address, internet-ready transport, containerized brain, single state location, separate serving/sleep processes, network RTT logged) | Mac↔Windows event round trip logged; one entry point |
-| **M1** | Conversation loop | Mic → AEC → VAD/Smart Turn → STT → local LLM → TTS → speaker, across the split; barge-in | End-to-end voice conversation, < 1 s median to first audio, per-stage latency logged |
+| **M1** | Conversation loop | Mic → AEC → VAD/Smart Turn → STT → local LLM → TTS → speaker, across the split; barge-in | End-to-end voice conversation, < 1 s median to first audio, per-stage latency logged. **Done 2026-10-30:** median 730 ms over 20 spoken turns; barge-in; tests pass on both machines |
 | **M2** | Memory v1 | Raw log, STM file, LTM entries + search, wake-up briefing, manual "sleep" that consolidates | Recalls facts across sessions on a 20-question own-conversation test |
 | **M3** | Feedback signals + Wonder logging | Reaction classifier, credit assignment, implicit signals, non-speech vocal sounds such as laughter (sound-event classifier), re-scoring script; Wonder predict-and-log | Classifier agreement with hand labels ≥ target on 100 utterances; Wonder accuracy tracked daily |
 | **M4** | First learning loop | Contextual bandit for one decision (proposed: `ask` vs. not) with frozen/learner swap; validated on simulated user first | Learns simulated user's hidden preference; then beats frozen baseline on live reward over 1–2 weeks |
@@ -546,3 +548,9 @@ Reviewed 2026-10-27: `JOCSTAA/AI` (2022–23; the unmerged `transformers` branch
 - **Field guide:** [Jason M0 Field Guide](https://claude.ai/artifact/HXBNsBHAPb977sAUr4WVni)
 - **Handbook:** [Jason M0 Handbook](https://claude.ai/artifact/J5moMxUAgeEXWxVPFYwCbv)
 - **Implementation doc:** [Jason M0: Project skeleton, event bus and logging](https://docs.google.com/document/d/11cAp3TL_fMorMZKkgWSLmoUKQTEjG0fYo3Esg6Ux9do/edit?tab=t.0)
+
+### M1 docs
+- **Field guide:** [Jason M1 Field Guide](https://claude.ai/artifact/QkUJjGsW4y5jHeLiyTjFpN)
+- **Handbook:** [Jason M1 Handbook](https://claude.ai/artifact/CEPc4182dMiAVVJz3KAxaC)
+- **Implementation doc:** [Jason M1: Conversation loop](https://docs.google.com/document/d/1U6ToPwzau7enpviJxU4mnm8NBVNRtlR6HkDvJIt7Sk8/edit)
+- **Spike:** `spikes/m1-mac-audio.md` (echo cancellation and the body's speech models)

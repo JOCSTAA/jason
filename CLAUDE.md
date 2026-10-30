@@ -13,6 +13,8 @@ A voice agent that learns and grows in real time. Core priorities, in order:
 - Review of old work: @docs/old-repos-review.md
 - Serving engine decision: @docs/spikes/m0-llm-serving.md
 
+Status: M0 and M1 are done (M1: spoken conversation, median 730 ms to first audio); M2 (memory) is next.
+
 ## Architecture and layout
 Two roles, one Python package (`jason/`). The **body** role (the Mac today, possibly another machine later, so no macOS assumptions outside swappable backends) runs audio and the floor controller; the **brain** role (Windows RTX 4090 today, possibly a cloud GPU later; runs in Docker) runs the LLM, memory, learner and sleep. Each machine has an in-process **event bus**; every event published on it is written to that machine's **raw log**, and a **WebSocket link** (over Tailscale, token-authenticated) carries events between the two buses.
 
