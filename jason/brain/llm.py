@@ -38,6 +38,10 @@ log = logging.getLogger(__name__)
 # Actions this component writes words for. M5 adds interject and ask.
 SPEAKING_ACTIONS = {ev.Action.RESPOND}
 
+# Appended to a reply in the history when the user cut Jason off (barge-in);
+# the persona tells the model what it means and never to write it.
+INTERRUPTED = "[interrupted by Josh]"
+
 
 class ClauseSplitter:
     """Cuts a reply streamed piece by piece into clauses for text-to-speech.
@@ -135,8 +139,14 @@ class LlmComponent:
             case ev.ReplyHeard():
                 # The only way Jason's words enter the history. A reply the body
                 # never reports as heard stays out: Jason can't know what was heard.
-                if event.payload.text.strip():
-                    self.history.append({"role": "assistant", "content": event.payload.text})
+                text = event.payload.text.strip()
+                if event.payload.interrupted_by:
+                    # Mark a cut-off turn as cut off. Unmarked, the model copied
+                    # its own interrupted turns and began ending replies
+                    # mid-sentence by itself (first barge-in test, M1 step 12).
+                    text = f"{text} {INTERRUPTED}".strip()
+                if text:
+                    self.history.append({"role": "assistant", "content": text})
 
     def _start_reply(self, action: ev.AgentAction) -> None:
         if self._task and not self._task.done():

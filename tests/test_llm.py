@@ -187,8 +187,8 @@ async def test_prompt_is_persona_then_history_then_the_transcript_it_saw(setup):
     assert msgs == [
         {"role": "system", "content": "You are Jason."},
         {"role": "user", "content": "Hello"},
-        # What the user heard, not the full generated reply.
-        {"role": "assistant", "content": "Sure thing, I can help."},
+        # What the user heard, not the full generated reply, marked as cut off.
+        {"role": "assistant", "content": "Sure thing, I can help. [interrupted by Josh]"},
         {"role": "user", "content": "What about"},
     ]
     assert fake.requests[-1]["stream"] is True
@@ -294,3 +294,14 @@ async def test_warmup_failures_are_ignored(setup):
     user_says(bus, "hello")
     await asyncio.sleep(0.1)
     assert len(warmups(fake)) >= 2  # kept trying, didn't crash
+
+
+async def test_a_reply_heard_in_full_is_not_marked(setup):
+    bus, comp, fake, out = await setup()
+    first = respond(bus, user_says(bus, "Hello"))
+    await collect(out, lambda e: isinstance(e, ev.AgentUtterance))
+    bus.publish(ev.ReplyHeard(**BODY, payload=ev.ReplyHeardPayload(
+        action_id=first.id, text="Sure thing, I can help. Anything else?", complete=True, played_ms=2000.0)))
+    respond(bus, user_says(bus, "No thanks"))
+    await collect(out, lambda e: isinstance(e, ev.AgentUtterance))
+    assert {"role": "assistant", "content": "Sure thing, I can help. Anything else?"} in fake.requests[-1]["messages"]
