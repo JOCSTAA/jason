@@ -1,6 +1,6 @@
 # Jason — Design Doc
 
-_Last updated: 2026-10-30 (v2.7: added §5.6 Goal system, drives and emotion-like signals [Proposed, future])_
+_Last updated: 2026-10-30 (v2.8: §5.6 extended for a Jason with a body and for the owner's human reward-stimulus list)_
 
 Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
@@ -211,6 +211,11 @@ _Owner's idea, 2026-10-30. Not scheduled: earliest after M7, since it needs Wond
 
 This would replace the two reward families in §5.3 with three: curiosity becomes the first goal, and survival is new.
 
+**Built for a body.** Jason starts as a voice agent, but the owner plans to add more sensors (inputs) and motors or other outputs (actions). So drives and goals are defined over generic channels, not over speech:
+- Every sensor is an input stream with an optional set point (temperature, battery, distance). Adding a sensor adds a survival drive without changing the reward code. This extends the pluggable-inputs decision (§2).
+- Every output is an action channel. Speech stays under the floor controller (§4). Motors would add a layer above it: a goal picks a skill ("go to the fridge"), and a lower-level controller runs the motor commands. That is hierarchical RL (options), and it changes the decided action space, so it needs its own decision when it arrives.
+- Physical outputs get hard safety limits outside anything learned (speed, force, a stop switch), the same way rate limits sit outside the floor controller today.
+
 **How it would work**
 1. **Stimulus to goal.** Sensors publish events, and the core turns each into a short text statement ("I've gone 20 hours without sleeping"). If no similar goal is active, a goal is created with a priority; if one is, its priority is raised or reassessed.
 2. **Where goals live.** Active goals sit in a goal list loaded into short-term memory, like an agenda. Completed and abandoned goals are summarized into long-term memory during sleep, so Jason knows what he has done before.
@@ -251,6 +256,25 @@ They are logged like every other signal, so their effect can be measured, and Ja
 | Effort | Time cost per step; compute cost |
 | Delay discounting | The discount γ |
 | Loss aversion | Negative rewards weighted more heavily than positive ones |
+| Baseline vs. spike | Reward measured against a running average (the advantage), so steady rewards fade and surprises stand out |
+| Sensitivity (receptor density) | Per-source weights (the β values): Jason's temperament, set by hand rather than learned |
+| Hormonal state | Mood-like state from the emotion signals, which scales sensitivity (high frustration lowers curiosity) |
+| Subjective value | What an event is worth depends on current goals and drives, not a fixed number per event |
+| Deprivation | The reward for fixing a drive scales with how far off it was |
+| Probability and uncertainty | Wonder's predicted chance of success; uncertainty also prompts questions (§5.3 A) |
+| Environmental cues | Learned value of situations that predict reward (the critic), once an actor-critic exists |
+| Intrinsic vs. extrinsic | Goals and survival (intrinsic) vs. Josh's reactions (extrinsic) |
+
+**Human reward stimuli translated.** From the owner's reference list, which sorts stimuli by origin (outside or inside the body) and by whether the reward comes from gaining something or from relief:
+
+| Origin | Gain (positive reinforcement) | Relief (negative reinforcement) |
+|---|---|---|
+| **External** | Biogenic: resources the body needs (with a body: charging, cooling). Social: Josh's approval, being included. Novelty: new information or places, scored as learning progress | Threat cessation: a danger signal clearing (obstacle, overheating). Noxious mitigation: leaving a harmful environment (noise, heat). Conflict resolution: a disagreement or correction with Josh resolved |
+| **Internal** | Cognitive consistency: predictions improving, a question answered, a goal completed. Deficit sensitization: a large drive makes related rewards worth more. Neurohormonal surges: no direct equivalent; the satisfaction signal is closest | Homeostatic correction: a variable returning to its set point. Pain cessation: an error or fault state clearing. Distress mitigation: the frustration or caution signal easing |
+
+**Relief counts as reward.** Drive reduction already rewards leaving a bad state, so gain and relief come from one formula: reward equals the drop in a drive. Deficit sensitization follows from it, since fixing a drive that was far off earns more.
+
+**Left out on purpose.** Secondary tokens (points or scores Jason could pile up) invite reward hacking, and status means nothing with one user. Jason must also never use unpredictable rewards on Josh to keep him engaged (the gambling and social-media pattern in the reference); this joins the sycophancy safeguards in §5.4.
 
 **How we'd know it works:** survival variables stay in range without Josh stepping in; Jason completes held-out goals faster over time; the gaming warning sign stays quiet; and Josh's reaction rate is no lower than without goals (compared on the replay set).
 
