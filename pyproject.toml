@@ -22,6 +22,7 @@ jason = "jason.cli:main"
 body = [
     "livekit>=1.2.0",
     "numpy>=2.5.4",
+    "onnxruntime>=1.31.1",
     "sounddevice>=0.5.6",
     "soxr>=1.1.0",
 ]

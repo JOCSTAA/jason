@@ -3,19 +3,26 @@
 Plays a speech-like test sound through the speakers while recording the mic,
 then reports: the room's noise level, how loud the echo was before and after
 cancellation, how long sound takes from speaker to mic, and whether any audio
-blocks were dropped. Stay quiet while it runs (about 10 s).
+blocks were dropped. Then it plays a clip of Jason's voice and reports how
+often the VAD hears speech in the mic: it should be close to never with echo
+cancellation (the M1 spike: 0.1%) against most of the time without (83%).
+Stay quiet while it runs (about 20 s).
 """
 
 import asyncio
+import wave
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+import soxr
 
-from jason.body.audio import IO_SR, AudioIO
+from jason.body.audio import IO_SR, MIC_SR, AudioIO
 from jason.core.config import AudioConfig
 
 LEAD_S, SIGNAL_S, TAIL_S = 1.5, 6.0, 2.0
+VOICE_GAP_S, VOICE_TAIL_S = 1.0, 1.0
 SETTLE_S = 1.0  # AEC3 adapts to the room in the first second; don't score it
 
 
@@ -45,6 +52,41 @@ def delay_ms(reference: np.ndarray, mic: np.ndarray, max_ms: float = 600) -> flo
     xc = np.fft.irfft(np.fft.rfft(mic[:n], size) * np.conj(np.fft.rfft(reference[:n], size)), size)
     lag = int(np.argmax(xc[: int(max_ms / 1000 * IO_SR)]))
     return 1000 * lag / IO_SR
+
+
+def read_wav(path: Path) -> tuple[np.ndarray, int]:
+    """A 16-bit mono WAV as floats, with its sample rate."""
+    with wave.open(str(path)) as w:
+        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+        return pcm.astype(np.float32) / 32768, w.getframerate()
+
+
+def speech_percent(mic48: np.ndarray, model_file: Path) -> float:
+    """How often Silero hears speech in this audio, slice by slice."""
+    from jason.body.listen import CHUNK, Silero
+
+    vad = Silero(model_file)
+    x = soxr.resample(mic48, IO_SR, MIC_SR).astype(np.float32)
+    probs = [vad(x[i:i + CHUNK]) for i in range(0, len(x) - CHUNK + 1, CHUNK)]
+    return 100 * float(np.mean(np.array(probs) >= 0.5)) if probs else 0.0
+
+
+@dataclass
+class VoiceResult:
+    clean_pct: float  # with echo cancellation: the VAD should hear (almost) nothing
+    raw_pct: float  # without it, for comparison
+
+    @property
+    def ok(self) -> bool:
+        return self.clean_pct <= 2.0
+
+    def lines(self) -> list[str]:
+        return [
+            f"Jason's voice heard as speech: {self.clean_pct:.1f}% with echo cancellation, "
+            f"{self.raw_pct:.1f}% without",
+            "OK: the VAD stays quiet while Jason talks" if self.ok else
+            "PROBLEM: the VAD hears Jason's own voice; barge-in would trigger on it",
+        ]
 
 
 @dataclass
@@ -93,10 +135,15 @@ def score(timeline: np.ndarray, raw: np.ndarray, clean: np.ndarray, status_flags
     )
 
 
-async def run_check(cfg: AudioConfig, out: Callable[[str], None] = print) -> CheckResult:
+async def run_check(cfg: AudioConfig, out: Callable[[str], None] = print) -> tuple[CheckResult, VoiceResult]:
     signal = speechlike_signal()
-    timeline = np.concatenate([np.zeros(int(LEAD_S * IO_SR)), signal, np.zeros(int(TAIL_S * IO_SR))]).astype(np.float32)
-    out(f"Stay quiet: playing a test sound for {len(timeline) / IO_SR:.0f} s ...")
+    voice, voice_sr = read_wav(cfg.assets() / "voice_check.wav")
+    voice = soxr.resample(voice, voice_sr, IO_SR).astype(np.float32)
+    timeline = np.concatenate([
+        np.zeros(int(LEAD_S * IO_SR)), signal, np.zeros(int(TAIL_S * IO_SR)),
+        np.zeros(int(VOICE_GAP_S * IO_SR)), voice, np.zeros(int(VOICE_TAIL_S * IO_SR)),
+    ]).astype(np.float32)
+    out(f"Stay quiet: playing test sounds for {len(timeline) / IO_SR:.0f} s ...")
     io = AudioIO(cfg.input_device, cfg.output_device, keep_raw=True)
     io.start()
     try:
@@ -104,7 +151,12 @@ async def run_check(cfg: AudioConfig, out: Callable[[str], None] = print) -> Che
         await asyncio.sleep(len(timeline) / IO_SR + 0.3)
     finally:
         io.stop()
-    result = score(timeline, np.concatenate(io.raw), np.concatenate(io.clean48), io.stats.status_flags, io.stats.blocks)
-    for line in result.lines():
+    raw, clean = np.concatenate(io.raw), np.concatenate(io.clean48)
+    result = score(timeline, raw, clean, io.stats.status_flags, io.stats.blocks)
+    v0 = int((LEAD_S + SIGNAL_S + TAIL_S + VOICE_GAP_S) * IO_SR)
+    v1 = v0 + len(voice) + int(0.5 * IO_SR)  # and the half second after, where echo could linger
+    model = cfg.assets() / "silero_vad.onnx"
+    voice_result = VoiceResult(speech_percent(clean[v0:v1], model), speech_percent(raw[v0:v1], model))
+    for line in result.lines() + voice_result.lines():
         out(line)
-    return result
+    return result, voice_result

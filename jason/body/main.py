@@ -1,8 +1,9 @@
 """Body-role entry point: `jason run --role body`.
 
 The body connects to the brain and either sends a ping every few seconds,
-printing the round trip, or (with --text) runs text-only chat. Later M1 steps
-add the microphone, speech-to-text, the floor controller and text-to-speech.
+printing the round trip, runs text-only chat (--text), or prints what the
+microphone's listener hears (--listen). Later M1 steps add speech-to-text,
+the floor controller and text-to-speech.
 """
 
 import asyncio
@@ -104,9 +105,11 @@ async def run_body(
     out: Callable[[str], None] = print,
     text: bool = False,
     read_line: Callable[[str], Awaitable[str | None]] = read_stdin,
+    listen: bool = False,
 ) -> list[float]:
     """Run until cancelled, or until `count` pings have been answered, or (with
-    text=True) until the text chat ends.
+    text=True) until the text chat ends. listen=True prints what the
+    microphone's listener hears instead (needs the body's audio libraries).
 
     Raises LinkAuthError / LinkVersionError if the brain can't be talked to.
     """
@@ -125,6 +128,11 @@ async def run_body(
             bus.emit(ev.System, ev.SystemPayload(kind="startup", message="body started"))
             if text:
                 await text_chat(bus, read_line, out)
+                return []
+            if listen:
+                from jason.body.listen import show_listening  # needs the audio libraries
+
+                await show_listening(bus, cfg.audio, out)
                 return []
             return await pinger(bus, client, count, every_s, out, rtts, offsets_ms)
 

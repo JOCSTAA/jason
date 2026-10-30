@@ -66,12 +66,29 @@ class LlmConfig(_Strict):
     warm_window_s: Annotated[float, Field(ge=0)] = 60.0
 
 
+REPO_ASSETS = Path(__file__).resolve().parent.parent.parent / "assets"
+
+
 class AudioConfig(_Strict):
-    """The body's mic and speaker. Device names as `python -m sounddevice`
-    lists them; empty means the system default."""
+    """The body's mic and speaker, and how it listens. Device names as
+    `python -m sounddevice` lists them; empty means the system default."""
 
     input_device: str = ""
     output_device: str = ""
+    # Model files and the voice-check clip (committed in the repo's assets/).
+    assets_dir: Path | None = None
+    # Voice activity (jason/body/listen.py): speech starts after start_chunks
+    # 32 ms slices in a row at or above vad_threshold; a pause is pause_ms
+    # below vad_off_threshold.
+    vad_threshold: Annotated[float, Field(gt=0, lt=1)] = 0.5
+    vad_off_threshold: Annotated[float, Field(gt=0, lt=1)] = 0.35
+    start_chunks: Annotated[int, Field(ge=1)] = 3
+    pause_ms: Annotated[float, Field(gt=0)] = 200.0
+    preroll_ms: Annotated[float, Field(ge=0)] = 300.0  # audio kept from just before speech starts
+    new_utterance_after_s: Seconds = 3.0  # silence that ends an utterance nobody acted on
+
+    def assets(self) -> Path:
+        return self.assets_dir or REPO_ASSETS
 
 
 class BodyConfig(_Strict):
@@ -121,6 +138,9 @@ def load_config(path: Path, role: Literal["body", "brain"]) -> Config:
     link = raw.get("link", {})
     if "token_file" in link:
         link["token_file"] = _resolve(link["token_file"], base)
+    audio = raw.get("audio", {})
+    if "assets_dir" in audio:
+        audio["assets_dir"] = _resolve(audio["assets_dir"], base)
     llm = raw.get("llm", {})
     if "persona_file" in llm:
         llm["persona_file"] = _resolve(llm["persona_file"], base)

@@ -32,11 +32,14 @@ jason/
   body/main.py      body role: pinger, or text chat with --text
   body/text.py      text-only mode: a typed line stands in for STT + floor controller
   body/audio.py     mic + speaker: duplex stream, echo cancellation, 16 kHz mic frames, playhead
-  body/audio_check.py  `jason audio-check`: echo before/after cancellation, speaker-to-mic delay
+  body/audio_check.py  `jason audio-check`: echo before/after cancellation, speaker-to-mic delay, VAD on Jason's voice
+  body/listen.py    Silero VAD → speech_start/speech_end; Smart Turn at each pause → turn_end_prob
+  body/turn.py      Smart Turn model + Whisper log-mel features in numpy
   brain/main.py     brain role: ping responder + LLM component
   brain/llm.py      writes Jason's replies: prompt, vLLM stream, clauses, cancel
 config/body.toml, config/brain.toml  one config per role (committed, no secrets)
 config/persona.md                    Jason's system prompt (the brain's [llm] persona_file)
+assets/                              committed model files (Silero, Smart Turn) and the voice-check clip; see assets/README.md
 Dockerfile, compose.yaml             the brain's container (CPU-only) and the `llm` service (vLLM, GPU, no published port)
 scripts/llm_check.py                 checks the LLM from inside the brain container
 tests/                               pytest; test_container.py is opt-in
@@ -61,7 +64,7 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 - Token (once): `uv run jason gen-token`, then copy `~/jason-data/link_token` to the other machine
 - Run the brain: `docker compose up --build -d` starts the brain and the LLM (logs: `docker compose logs -f brain` or `llm`; stop: `docker compose down`). The LLM needs the NVIDIA GPU, so on the Mac start only the brain: `docker compose up --build -d brain`. `config/brain.toml` uses the container's paths, so outside Docker pass a config with local paths
 - Check the LLM (brain machine): `docker compose exec -T brain python - < scripts/llm_check.py`
-- Run the body (on the Mac): `uv run jason run --role body` (`--count N` to stop after N pings); `--text` to chat with Jason by typing (no audio)
+- Run the body (on the Mac): `uv run jason run --role body` (`--count N` to stop after N pings); `--text` to chat with Jason by typing (no audio); `--listen` to watch speech start, pauses and end-of-turn live
 - New day (until sleep exists): `docker compose exec brain jason new-day`
 - Without `--config`, commands use `config/<role>.toml`
 
