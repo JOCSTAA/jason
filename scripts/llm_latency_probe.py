@@ -15,6 +15,15 @@ those apart (about 3 minutes):
   C  the same prompt, 10 s pause before each         slow here = the GPU idling
   D  B's prompts again, back to back                 fast now = tuning was cached
 
+Result (2026-10-30): A 35 ms, B 42, C 356, D 39. The pause is the cause.
+Second mode, JASON_PROBE=wake, measures what a fix needs (about 4 minutes):
+
+  decay  first token after pauses of 0.5 to 10 s      how fast it goes cold
+  wake   10 s pause, a one-token warm-up, then wait    does warming up first
+         0.2 / 0.5 / 1 s before the real request       work, and how early
+
+    PowerShell: $env:JASON_PROBE="wake"; ... | docker compose exec -T -e JASON_PROBE brain python -
+
 Standard library only, so it runs in the brain image as is.
 """
 
@@ -26,6 +35,7 @@ import urllib.request
 
 BASE = os.environ.get("JASON_LLM_URL", "http://llm:8000")
 PAUSE_S = float(os.environ.get("JASON_PROBE_PAUSE_S", "10"))
+WAKE_IDLE_S = float(os.environ.get("JASON_PROBE_IDLE_S", "10"))
 
 SYSTEM = (
     "You are Jason, a voice companion who learns from every conversation with Josh. "
@@ -75,7 +85,30 @@ def run(name: str, prompts: list, pause_s: float = 0.0) -> list[float]:
     return times
 
 
+def wake_mode() -> None:
+    same = conversation(2)
+    first_token_ms(same)
+    decay = {}
+    for pause in (0.5, 1, 2, 3, 5, WAKE_IDLE_S):
+        decay[pause] = run(f"decay: after {pause:>4g} s pause  ", [same] * 3, pause_s=pause)
+    wake = {}
+    for lead in (0.2, 0.5, 1.0):
+        times = []
+        for _ in range(3):
+            time.sleep(WAKE_IDLE_S)
+            first_token_ms(conversation(0))  # the warm-up, as speech_start would trigger
+            time.sleep(lead)
+            times.append(round(first_token_ms(same), 1))
+        wake[lead] = times
+        print(f"wake: {WAKE_IDLE_S:g} s idle, warm-up, {lead:g} s later: median {statistics.median(times):6.1f} ms   each: {times}", flush=True)
+    print(json.dumps({"decay": {k: statistics.median(v) for k, v in decay.items()},
+                      "wake": {k: statistics.median(v) for k, v in wake.items()}}))
+
+
 def main() -> None:
+    if os.environ.get("JASON_PROBE") == "wake":
+        wake_mode()
+        return
     first_token_ms(conversation(0))  # wake it up once
     same = conversation(2)
     growing = [conversation(n) for n in range(len(USER_LINES))]
