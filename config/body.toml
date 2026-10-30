@@ -12,3 +12,7 @@ heartbeat_s = 2.0                      # how often to check the link is alive
 timeout_s = 10.0                       # this long with no reply means the link is dead
 reconnect_max_s = 10.0                 # longest wait between reconnect attempts
 clock_sync_s = 5.0                     # how often to measure clock offset and round trip
+
+[audio]
+input_device = ""                      # "" = the system default (python -m sounddevice lists devices)
+output_device = ""

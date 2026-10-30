@@ -66,11 +66,20 @@ class LlmConfig(_Strict):
     warm_window_s: Annotated[float, Field(ge=0)] = 60.0
 
 
+class AudioConfig(_Strict):
+    """The body's mic and speaker. Device names as `python -m sounddevice`
+    lists them; empty means the system default."""
+
+    input_device: str = ""
+    output_device: str = ""
+
+
 class BodyConfig(_Strict):
     role: Literal["body"]
     machine: MachineName
     state_dir: Path
     link: BodyLink
+    audio: AudioConfig = AudioConfig()
 
 
 class BrainConfig(_Strict):

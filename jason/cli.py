@@ -4,6 +4,7 @@
     jason new-day [--role brain|body] [--config PATH]
     jason sleep [--config PATH]
     jason gen-token [--file PATH] [--force]
+    jason audio-check [--config PATH]
 
 Without --config, each command uses config/<role>.toml from the repo.
 """
@@ -58,6 +59,9 @@ def main(argv: list[str] | None = None) -> None:
     sleep = sub.add_parser("sleep", help="run the nightly sleep jobs (M6)")
     sleep.add_argument("--config", type=Path)
 
+    check = sub.add_parser("audio-check", help="body: test the mic, speaker and echo cancellation")
+    check.add_argument("--config", type=Path)
+
     gen = sub.add_parser("gen-token", help="create the link auth token")
     gen.add_argument("--file", type=Path, default=DEFAULT_TOKEN_FILE, help="where to write it")
     gen.add_argument("--force", action="store_true", help="replace an existing token")
@@ -73,6 +77,8 @@ def main(argv: list[str] | None = None) -> None:
             _run(args)
         elif args.command == "new-day":
             _new_day(args)
+        elif args.command == "audio-check":
+            _audio_check(args)
         elif args.command == "sleep":
             print("jason sleep: not implemented until M6; nothing to do.")
         else:
@@ -133,6 +139,17 @@ def _new_day(args: argparse.Namespace) -> None:
     if not result.ok:
         sys.exit(f"jason: {result.message}")
     print(result.message)
+
+
+def _audio_check(args: argparse.Namespace) -> None:
+    cfg = load_config(args.config or default_config("body"), "body")
+    try:
+        from jason.body.audio_check import run_check
+    except ImportError as e:
+        sys.exit(f"jason: the body's audio libraries aren't installed ({e.name}); run `uv sync --extra body`")
+    result = asyncio.run(run_check(cfg.audio))
+    if not result.ok:
+        sys.exit(1)
 
 
 def _gen_token(file: Path, force: bool) -> None:

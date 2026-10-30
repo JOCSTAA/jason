@@ -31,6 +31,8 @@ jason/
   net/admin.py      one-shot commands to a running brain (/admin)
   body/main.py      body role: pinger, or text chat with --text
   body/text.py      text-only mode: a typed line stands in for STT + floor controller
+  body/audio.py     mic + speaker: duplex stream, echo cancellation, 16 kHz mic frames, playhead
+  body/audio_check.py  `jason audio-check`: echo before/after cancellation, speaker-to-mic delay
   brain/main.py     brain role: ping responder + LLM component
   brain/llm.py      writes Jason's replies: prompt, vLLM stream, clauses, cancel
 config/body.toml, config/brain.toml  one config per role (committed, no secrets)
@@ -54,8 +56,8 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 - Flag any change that conflicts with docs/decisions.md
 
 ## Commands
-- Install: `uv sync` (uv installs Python 3.12 and the locked dependencies into `.venv/`)
-- Tests: `uv run pytest` (strict: `uv run pytest -W error`; container test: `JASON_DOCKER_TESTS=1 uv run pytest tests/test_container.py`)
+- Install: `uv sync` (uv installs Python 3.12 and the locked dependencies into `.venv/`); on the body's machine (the Mac) `uv sync --extra body` for the audio libraries
+- Tests: `uv run pytest` (strict: `uv run pytest -W error`; container test: `JASON_DOCKER_TESTS=1 uv run pytest tests/test_container.py`; real mic and speaker: `JASON_AUDIO_TESTS=1 uv run pytest tests/test_audio.py`, or `uv run jason audio-check`)
 - Token (once): `uv run jason gen-token`, then copy `~/jason-data/link_token` to the other machine
 - Run the brain: `docker compose up --build -d` starts the brain and the LLM (logs: `docker compose logs -f brain` or `llm`; stop: `docker compose down`). The LLM needs the NVIDIA GPU, so on the Mac start only the brain: `docker compose up --build -d brain`. `config/brain.toml` uses the container's paths, so outside Docker pass a config with local paths
 - Check the LLM (brain machine): `docker compose exec -T brain python - < scripts/llm_check.py`
@@ -71,7 +73,7 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 - Show the changes you plan to make in the staging area before committing, so i can read and approve them
 
 ## Code conventions
-- Components are asyncio tasks that talk only through the event bus (`bus.emit` / `bus.subscribe`), never by calling each other
+- Components are asyncio tasks that talk only through the event bus (`bus.emit` / `bus.subscribe`), never by calling each other. One exception: sound samples go directly between `AudioIO` and the components that read or write them (VAD, STT, TTS); anything those produce that means something is an event
 - Every event type is a frozen pydantic model in `core/events.py` (`extra="forbid"`); changing a field's meaning bumps `SCHEMA_VERSION`, changing the wire format bumps `PROTOCOL_VERSION`
 - The bus stamps `seq` and `run_id` on publish: never set them yourself, and use the event `publish()`/`emit()` return
 - The raw log is append-only: never edit, rewrite or delete it
