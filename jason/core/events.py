@@ -19,6 +19,9 @@ Version history:
      complete and model_version; latency_mark.stage is a fixed list (the old
      free-text values network_rtt and ping_rtt are on it, so older logs read).
   4  latency_mark.stage gains barge_in (M1 step 12).
+  5  llm_first_token and first_clause measure how long the respond decision
+     waited for them (the brain drafts replies before the decision; 0 when
+     the draft was already that far), no longer the generation time.
 """
 
 import math
@@ -30,7 +33,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, m
 
 from jason.core import clock
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class _Frozen(BaseModel):
@@ -235,8 +238,8 @@ class LatencyStage(StrEnum):
     PING_RTT = "ping_rtt"  # M0 pinger: ping published → pong received, bus to bus
     TURN_DECISION = "turn_decision"  # user stopped speaking → floor controller chose to respond
     STT_FINAL = "stt_final"  # final transcription call
-    LLM_FIRST_TOKEN = "llm_first_token"  # request sent → first token back
-    FIRST_CLAUSE = "first_clause"  # request sent → first reply_chunk ready
+    LLM_FIRST_TOKEN = "llm_first_token"  # respond decision → first token (0 if a draft had it already)
+    FIRST_CLAUSE = "first_clause"  # respond decision → first reply_chunk ready (0 if drafted already)
     TTS_FIRST_CHUNK = "tts_first_chunk"  # clause received → first audio synthesized
     FIRST_AUDIO = "first_audio"  # user's last voiced frame → first reply sample at the speaker
     BARGE_IN = "barge_in"  # user's first voiced sound over Jason → Jason's playback stopped

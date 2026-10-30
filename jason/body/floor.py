@@ -1,6 +1,6 @@
 """The floor controller: decides when Jason speaks (design §4, §9; M1 step 11).
 
-Every tick (100 ms) it looks at the conversation and chooses between two of
+Every tick (20 ms) it looks at the conversation and chooses between two of
 the six actions: `silent` (keep listening) and `respond` (answer now). M5 adds
 backchannel, interject and ask.
 

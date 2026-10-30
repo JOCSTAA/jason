@@ -1,12 +1,16 @@
 """The brain's LLM component: turns a `respond` decision into a spoken reply.
 
-    agent_action (respond) ──► prompt ──► vLLM (streamed) ──► reply_chunk × N
-                                                         └──► agent_utterance (once)
+    user_final (a pause) ──► draft: prompt ──► vLLM (streamed) ──► clauses held
+    agent_action (respond to that transcript) ──► release ──► reply_chunk × N, agent_utterance (once)
+    the user carries on (a newer user_final) ──► the draft is thrown away
     reply_cancel ──► stop generating          reply_heard ──► history
     any sign of the user ──► keep the GPU awake for a while
 
 The body decides when Jason speaks (floor controller, design §9); this
-component only decides what he says. It talks to vLLM's OpenAI-compatible API
+component only decides what he says. It starts writing at each pause, before
+the body decides, so the floor controller's wait and the writing overlap
+instead of adding up: the first half of design §9's "the brain offers, the
+body decides" (M5 adds drafting from partial transcripts and offers). It talks to vLLM's OpenAI-compatible API
 and to the rest of Jason only through the bus.
 
 Prompt layout, stable text first so vLLM's prefix cache covers almost all of it
@@ -25,6 +29,7 @@ import contextlib
 import json
 import logging
 from collections import deque
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -93,6 +98,32 @@ class ClauseSplitter:
         return None
 
 
+@dataclass(eq=False)
+class _Gen:
+    """One generation. It starts as a draft, when a transcript at a pause
+    arrives, and is held; it becomes Jason's reply when the body decides to
+    respond to that transcript (released), or is thrown away if the user
+    carries on. A decision with no draft waiting starts one released."""
+
+    final_id: str  # the transcript it answers
+    text: str
+    messages: list[dict[str, str]]
+    started_ns: int = field(default_factory=clock.monotonic_ns)
+    action: ev.AgentAction | None = None  # set when released
+    released_ns: int | None = None
+    first_token_ns: int | None = None
+    first_clause_ns: int | None = None
+    parts: list[str] = field(default_factory=list)
+    held: list[tuple[str, bool]] = field(default_factory=list)  # clauses not sent yet
+    index: int = 0
+    finished: bool = False  # the stream ended (fully, or in an error)
+    complete: bool = False
+    error: str | None = None
+    logged: bool = False  # its agent_utterance has been emitted
+    marked: set[ev.LatencyStage] = field(default_factory=set)  # waits already logged
+    task: asyncio.Task[None] | None = None
+
+
 class LlmComponent:
     def __init__(self, bus: EventBus, cfg: LlmConfig, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.bus = bus
@@ -105,8 +136,8 @@ class LlmComponent:
         # must not believe he said words the user never heard.
         self.history: deque[dict[str, str]] = deque(maxlen=cfg.history_turns)
         self._transcripts: dict[str, str] = {}  # user_partial/user_final event id -> text
-        self._task: asyncio.Task[None] | None = None
-        self._action_id: str | None = None  # the reply being generated
+        self._draft: _Gen | None = None  # written ahead, waiting for the body's decision
+        self._reply: _Gen | None = None  # released: Jason's current reply
         self._last_activity: int | None = None  # monotonic ns of the user's last sign of life
 
     async def run(self) -> None:
@@ -121,21 +152,24 @@ class LlmComponent:
                 warmer.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await warmer
-            await self._stop_generating()
+            for gen in (self._draft, self._reply):
+                await self._stop(gen)
             await self.client.aclose()
 
     def _handle(self, event: ev.Event) -> None:
         if isinstance(event, ev.SpeechStart | ev.UserPartial | ev.UserFinal | ev.ReplyHeard):
             self._last_activity = clock.monotonic_ns()
         match event:
-            case ev.UserPartial() | ev.UserFinal():
-                self._transcripts[event.id] = event.payload.text
-                if len(self._transcripts) > 200:  # only recent ones are ever looked up
-                    self._transcripts.pop(next(iter(self._transcripts)))
+            case ev.UserPartial():
+                self._remember(event)
+            case ev.UserFinal():
+                self._remember(event)
+                self._start_draft(event)
             case ev.AgentAction() if event.payload.action in SPEAKING_ACTIONS:
                 self._start_reply(event)
-            case ev.ReplyCancel() if event.payload.action_id == self._action_id and self._task:
-                self._task.cancel()
+            case ev.ReplyCancel() if self._reply and self._reply.action and event.payload.action_id == self._reply.action.id:
+                if self._reply.task and not self._reply.task.done():
+                    self._reply.task.cancel()
             case ev.ReplyHeard():
                 # The only way Jason's words enter the history. A reply the body
                 # never reports as heard stays out: Jason can't know what was heard.
@@ -148,40 +182,65 @@ class LlmComponent:
                 if text:
                     self.history.append({"role": "assistant", "content": text})
 
+    def _remember(self, event: ev.Event) -> None:
+        self._transcripts[event.id] = event.payload.text
+        if len(self._transcripts) > 200:  # only recent ones are ever looked up
+            self._transcripts.pop(next(iter(self._transcripts)))
+
+    def _messages(self, text: str) -> list[dict[str, str]]:
+        return [{"role": "system", "content": self.persona}, *self.history, {"role": "user", "content": text}]
+
+    def _start_draft(self, final: ev.UserFinal) -> None:
+        """Start writing the answer to a transcript at a pause before the body
+        decides whether to answer it (a draft; decision 2026-10-30)."""
+        self._discard_draft()  # the user carried on: the older draft answers words that are no longer the turn
+        gen = _Gen(final.id, final.payload.text, self._messages(final.payload.text))
+        gen.task = asyncio.create_task(self._generate(gen))
+        self._draft = gen
+
+    def _discard_draft(self) -> None:
+        if self._draft is not None:
+            if self._draft.task and not self._draft.task.done():
+                self._draft.task.cancel()
+            self._draft = None
+
     def _start_reply(self, action: ev.AgentAction) -> None:
-        if self._task and not self._task.done():
-            self._task.cancel()  # one reply at a time: the newest decision wins
+        if self._reply and self._reply.task and not self._reply.task.done():
+            self._reply.task.cancel()  # one reply at a time: the newest decision wins
+        draft, self._draft = self._draft, None
+        if draft is not None and draft.final_id == action.payload.based_on_id:
+            gen = draft  # written ahead: release what's ready at once
+        else:
+            if draft is not None and draft.task and not draft.task.done():
+                draft.task.cancel()
+            text = self._transcripts.get(action.payload.based_on_id or "")
+            if text is None:
+                self._error(action, "no transcript for this decision (based_on_id unknown)")
+                return
+            gen = _Gen(action.payload.based_on_id or "", text, self._messages(text))
+            gen.task = asyncio.create_task(self._generate(gen))
+        self.history.append({"role": "user", "content": gen.text})
+        self._reply = gen
+        self._release(gen, action)
 
-        text = self._transcripts.get(action.payload.based_on_id or "")
-        if text is None:
-            self._error(action, "no transcript for this decision (based_on_id unknown)")
-            return
-        messages = [{"role": "system", "content": self.persona}, *self.history, {"role": "user", "content": text}]
-        self.history.append({"role": "user", "content": text})
-        self._action_id = action.id
-        self._task = asyncio.create_task(self._generate(action, messages))
+    def _release(self, gen: _Gen, action: ev.AgentAction) -> None:
+        gen.action, gen.released_ns = action, clock.monotonic_ns()
+        self._mark_waits(gen)
+        held, gen.held = gen.held, []
+        for text, last in held:
+            self._send(gen, text, last)
+        if gen.finished:
+            self._log_utterance(gen)
 
-    async def _generate(self, action: ev.AgentAction, messages: list[dict[str, str]]) -> None:
+    async def _generate(self, gen: _Gen) -> None:
         body = {
             "model": self.cfg.model,
-            "messages": messages,
+            "messages": gen.messages,
             "max_tokens": self.cfg.max_tokens,
             "temperature": self.cfg.temperature,
             "stream": True,
         }
         splitter = ClauseSplitter()
-        parts: list[str] = []
-        index = 0
-        complete = False
-        t0 = clock.monotonic_ns()
-
-        def chunk(text: str, last: bool) -> None:
-            nonlocal index
-            self.bus.emit(ev.ReplyChunk, ev.ReplyChunkPayload(action_id=action.id, index=index, text=text, last=last))
-            if index == 0:
-                self._latency(ev.LatencyStage.FIRST_CLAUSE, t0, action.id)
-            index += 1
-
         try:
             async with self.client.stream("POST", "/v1/chat/completions", json=body) as resp:
                 resp.raise_for_status()
@@ -189,34 +248,67 @@ class LlmComponent:
                     piece = _content(line)
                     if not piece:
                         continue
-                    if not parts:
-                        self._latency(ev.LatencyStage.LLM_FIRST_TOKEN, t0, action.id)
-                    parts.append(piece)
+                    if gen.first_token_ns is None:
+                        gen.first_token_ns = clock.monotonic_ns()
+                        self._mark_waits(gen)
+                    gen.parts.append(piece)
                     for clause in splitter.feed(piece):
-                        chunk(clause, last=False)
+                        self._clause(gen, clause, last=False)
             # Every reply that isn't cancelled ends with a last=True chunk (empty
             # if the final clause already went out), so the body never waits.
-            chunk(splitter.flush(), last=True)
-            complete = True
+            self._clause(gen, splitter.flush(), last=True)
+            gen.complete = True
         except httpx.HTTPError as e:
-            self._error(action, f"{type(e).__name__}: {e}")
-            chunk("", last=True)
+            gen.error = f"{type(e).__name__}: {e}"
+            if gen.action is not None:
+                self._error(gen.action, gen.error)
+            self._clause(gen, "", last=True)
         finally:
-            # Also runs when cancelled (barge-in or a newer decision): the
-            # partial reply is logged with complete=False.
-            self.bus.emit(
-                ev.AgentUtterance,
-                ev.AgentUtterancePayload(
-                    action_id=action.id, text="".join(parts), complete=complete,
-                    model_version=self.cfg.model_version,
-                ),
-            )
-            if self._action_id == action.id:
-                self._action_id = None
+            gen.finished = True
+            # Also runs when cancelled (barge-in, a newer decision, or a
+            # discarded draft): a released reply is logged with complete=False;
+            # a draft nobody answered with leaves no trace.
+            if gen.action is not None:
+                self._log_utterance(gen)
+
+    def _clause(self, gen: _Gen, text: str, last: bool) -> None:
+        if gen.first_clause_ns is None and (text or last):
+            gen.first_clause_ns = clock.monotonic_ns()
+            self._mark_waits(gen)
+        if gen.action is None:
+            gen.held.append((text, last))
+        else:
+            self._send(gen, text, last)
+
+    def _send(self, gen: _Gen, text: str, last: bool) -> None:
+        assert gen.action is not None
+        self.bus.emit(ev.ReplyChunk, ev.ReplyChunkPayload(action_id=gen.action.id, index=gen.index, text=text, last=last))
+        gen.index += 1
+
+    def _mark_waits(self, gen: _Gen) -> None:
+        """How long the decision waited for the first token and the first
+        clause: 0 when the draft was already that far, the generation time
+        when the decision came first (schema 5)."""
+        if gen.action is None:
+            return
+        for stage, at in ((ev.LatencyStage.LLM_FIRST_TOKEN, gen.first_token_ns),
+                          (ev.LatencyStage.FIRST_CLAUSE, gen.first_clause_ns)):
+            if at is not None and stage not in gen.marked:
+                gen.marked.add(stage)
+                wait = max(0, at - max(gen.started_ns, gen.released_ns or 0))
+                self.bus.emit(ev.LatencyMark, ev.LatencyMarkPayload(stage=stage, duration_ns=wait, ref_id=gen.action.id))
+
+    def _log_utterance(self, gen: _Gen) -> None:
+        if gen.logged or gen.action is None:
+            return
+        gen.logged = True
+        self.bus.emit(ev.AgentUtterance, ev.AgentUtterancePayload(
+            action_id=gen.action.id, text="".join(gen.parts), complete=gen.complete,
+            model_version=self.cfg.model_version))
 
     async def _keep_warm(self) -> None:
         """While the user was active within warm_window_s, send a one-token
-        request every warm_interval_s, unless a real reply is keeping the GPU
+        request every warm_interval_s, unless a generation is keeping the GPU
         busy already. Failures are ignored: it's only a nudge."""
         body = {"model": self.cfg.model, "max_tokens": 1, "temperature": 0,
                 "messages": [{"role": "system", "content": self.persona}, {"role": "user", "content": "."}]}
@@ -224,25 +316,23 @@ class LlmComponent:
         while True:
             await asyncio.sleep(self.cfg.warm_interval_s)
             active = self._last_activity is not None and clock.monotonic_ns() - self._last_activity < window_ns
-            generating = self._task is not None and not self._task.done()
+            generating = any(g is not None and g.task is not None and not g.task.done() for g in (self._draft, self._reply))
             if active and not generating:
                 try:
                     await self.client.post("/v1/chat/completions", json=body)
                 except httpx.HTTPError as e:
                     log.debug("warm-up request failed: %s", e)
 
-    def _latency(self, stage: ev.LatencyStage, t0: int, ref_id: str) -> None:
-        self.bus.emit(ev.LatencyMark, ev.LatencyMarkPayload(stage=stage, duration_ns=clock.monotonic_ns() - t0, ref_id=ref_id))
-
     def _error(self, action: ev.AgentAction, message: str) -> None:
         log.warning("reply %s failed: %s", action.id, message)
         self.bus.emit(ev.System, ev.SystemPayload(kind="llm_error", message=message, data={"action_id": action.id}))
 
-    async def _stop_generating(self) -> None:
-        if self._task and not self._task.done():
-            self._task.cancel()
+    @staticmethod
+    async def _stop(gen: _Gen | None) -> None:
+        if gen is not None and gen.task and not gen.task.done():
+            gen.task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+                await gen.task
 
 
 def _content(line: str) -> str:

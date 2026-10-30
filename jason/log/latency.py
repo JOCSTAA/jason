@@ -7,8 +7,9 @@ are matched by the ids they point at:
 
     decide   your last sound → the floor controller answered   (turn_decision, ref = the decision)
     stt      the final transcription, inside `decide`           (stt_final, ref = the transcript)
-    llm 1st  request → first token                              (llm_first_token, ref = the decision)
-    clause   request → first clause ready                       (first_clause, ref = the decision)
+    llm 1st  how long the decision waited for the first token   (llm_first_token, ref = the decision)
+    clause   how long the decision waited for the first clause  (first_clause, ref = the decision)
+             (the brain drafts at each pause, so often 0: written while the floor controller waited)
     tts      clause arrived → its audio ready                   (tts_first_chunk, ref = the decision)
     first    your last sound → Jason's first sound              (first_audio, ref = the decision)
     rest     first − (decide + clause + tts): the network, queues and audio buffers

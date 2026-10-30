@@ -53,5 +53,5 @@ wait_sure_ms = 200.0                   # ... answer once the pause is 200 ms lon
 unsure_prob = 0.3                      # between: unsure ...
 wait_unsure_ms = 700.0
 wait_unlikely_ms = 1500.0              # below unsure_prob: sounds mid-thought
-tick_ms = 100.0
+tick_ms = 20.0                         # how often it looks
 policy_version = "rules-2"             # rules-2: a transcript ending on "a", "the", "to"... counts as unsure

@@ -243,13 +243,63 @@ async def test_unknown_transcript_is_an_error_not_a_guess(setup):
     assert fake.requests == []
 
 
-async def test_silent_decisions_are_ignored(setup):
+async def test_silent_decisions_say_nothing(setup):
     bus, comp, fake, out = await setup()
-    t = user_says(bus, "Hmm")
+    t = user_says(bus, "Hmm")  # a draft starts at the pause ...
     bus.publish(ev.AgentAction(**BODY, payload=ev.AgentActionPayload(
         action=ev.Action.SILENT, action_probs={ev.Action.SILENT: 1.0}, based_on_id=t.id)))
     await asyncio.sleep(0.05)
-    assert fake.requests == []
+    # ... but stays held: nothing is said, nothing enters the history.
+    assert not [e for e in drain(out) if isinstance(e, ev.ReplyChunk | ev.AgentUtterance)]
+    assert list(comp.history) == []
+
+
+# --- drafting at a pause ------------------------------------------------------------
+
+
+def drain(out):
+    items = []
+    while not out._queue.empty():
+        items.append(out._queue.get_nowait())
+    return items
+
+
+async def test_a_draft_written_ahead_is_released_at_once(setup):
+    bus, comp, fake, out = await setup()
+    final = user_says(bus, "Can you help?")
+    await asyncio.sleep(0.05)  # the floor controller is still deciding; the draft is done
+    assert not [e for e in drain(out) if isinstance(e, ev.ReplyChunk)]  # held
+    action = respond(bus, final)
+    await asyncio.sleep(0.02)
+    events = drain(out)
+    chunks = [e for e in events if isinstance(e, ev.ReplyChunk)]
+    assert [c.payload.text for c in chunks] == ["Sure thing,", "I can help.", "Anything else?"]
+    assert all(c.payload.action_id == action.id for c in chunks)
+    waits = {m.payload.stage: m.payload.duration_ns for m in events if isinstance(m, ev.LatencyMark)}
+    # The decision didn't wait for the first token or clause: they were ready.
+    assert waits == {ev.LatencyStage.LLM_FIRST_TOKEN: 0, ev.LatencyStage.FIRST_CLAUSE: 0}
+    assert len(fake.requests) == 1  # no second generation
+
+
+async def test_carrying_on_throws_the_draft_away(setup):
+    bus, comp, fake, out = await setup(FakeVllm(pieces=["Sure thing, "] + ["word "] * 10, delay=0.02))
+    user_says(bus, "So I was")
+    await asyncio.sleep(0.03)
+    later = user_says(bus, "So I was thinking we could go.")
+    action = respond(bus, later)
+    await collect(out, lambda e: isinstance(e, ev.AgentUtterance))
+    assert [r["messages"][-1]["content"] for r in fake.requests] == ["So I was", "So I was thinking we could go."]
+    assert list(comp.history)[0] == {"role": "user", "content": "So I was thinking we could go."}
+    assert action.id  # only the second draft became a reply
+
+
+async def test_answering_a_transcript_with_no_draft_writes_one_then(setup):
+    bus, comp, fake, out = await setup()
+    partial = user_says(bus, "What about", final=False)  # partials don't start drafts
+    action = respond(bus, partial)
+    seen = await collect(out, lambda e: isinstance(e, ev.AgentUtterance))
+    assert [c.payload.action_id for c in seen if isinstance(c, ev.ReplyChunk)] == [action.id] * 3
+    assert fake.requests[-1]["messages"][-1]["content"] == "What about"
 
 
 # --- keeping the GPU awake --------------------------------------------------------

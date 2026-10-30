@@ -135,8 +135,8 @@ def test_empty_machine_rejected():
 # --- schema 2 -------------------------------------------------------------------
 
 
-def test_schema_version_is_4():
-    assert ev.SCHEMA_VERSION == 4
+def test_schema_version_is_5():
+    assert ev.SCHEMA_VERSION == 5
 
 
 def test_seq_and_run_id_default_to_none_and_round_trip():

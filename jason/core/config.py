@@ -144,7 +144,7 @@ class FloorConfig(_Strict):
     wait_sure_ms: Annotated[float, Field(ge=0)] = 200.0
     wait_unsure_ms: Annotated[float, Field(ge=0)] = 700.0
     wait_unlikely_ms: Annotated[float, Field(ge=0)] = 1500.0
-    tick_ms: Annotated[float, Field(gt=0)] = 100.0  # how often it looks
+    tick_ms: Annotated[float, Field(gt=0)] = 20.0  # how often it looks (100 ms cost ~40 ms per turn on average)
     policy_version: str = "rules-2"  # bump whenever the rule changes: logged decisions say which rule made them
 
 
