@@ -25,6 +25,7 @@ jason/
   core/config.py    TOML config per role; link token
   core/state.py     brain's state.json: day counter + current session
   log/rawlog.py     append-only JSONL, one file per session
+  log/latency.py    `jason latency`: per-turn latency breakdown and the M1 exit check
   net/link.py       LinkServer (brain) / LinkClient (body); auth, reconnect, clock sync
   net/protocol.py   messages on the wire; PROTOCOL_VERSION
   net/clocksync.py  NTP-style clock offset and round trip
@@ -70,6 +71,7 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 - Run the brain: `docker compose up --build -d` starts the brain and the LLM (logs: `docker compose logs -f brain` or `llm`; stop: `docker compose down`). The LLM needs the NVIDIA GPU, so on the Mac start only the brain: `docker compose up --build -d brain`. `config/brain.toml` uses the container's paths, so outside Docker pass a config with local paths
 - Check the LLM (brain machine): `docker compose exec -T brain python - < scripts/llm_check.py`
 - Run the body (on the Mac): `uv run jason run --role body` holds a spoken conversation (needs `uv sync --extra body`); other modes: `--text` (typed; `--speak` to hear him), `--listen` (watch the listener and transcripts), `--ping` (`--count N` to stop after N pings). `--voice NAME --speed X` try another voice for one run; the default is `[tts]` in `config/body.toml`
+- Latency of the last conversation (on the body): `uv run jason latency` (`--all` for the whole day; it also prints the M1 exit check)
 - New day (until sleep exists): `docker compose exec brain jason new-day`
 - Without `--config`, commands use `config/<role>.toml`
 

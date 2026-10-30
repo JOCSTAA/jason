@@ -152,3 +152,17 @@ async def test_a_fragment_waits_like_an_unsure_pause_even_if_smart_turn_is_sure(
     actions, _ = decisions(out)
     assert [a.payload.action for a in actions] == [ev.Action.SILENT]
     assert (actions[0].payload.features["wait_ms"], actions[0].payload.features["ends_unfinished"]) == (700.0, 1.0)
+
+
+async def test_a_reply_cancelled_before_its_first_sound_stops_the_wait(setup):
+    bus, floor, out, state = setup
+    task = asyncio.create_task(floor.run())
+    await asyncio.sleep(0)
+    utterance(bus, floor, prob=0.95, ago_ms=300)
+    floor.tick()
+    [action], _ = decisions(out)
+    assert action.id in floor._watchers
+    bus.emit(ev.ReplyCancel, ev.ReplyCancelPayload(action_id=action.id, reason="barge_in"))
+    await asyncio.sleep(0.02)
+    assert action.id not in floor._watchers  # no 15 s wait, no warning
+    task.cancel()

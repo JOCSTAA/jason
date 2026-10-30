@@ -7,6 +7,7 @@
     jason sleep [--config PATH]
     jason gen-token [--file PATH] [--force]
     jason audio-check [--config PATH] [--echo-delay-ms MS]
+    jason latency [--config PATH] [--session ID] [--all] [--min-turns N]
 
 Without --config, each command uses config/<role>.toml from the repo.
 """
@@ -69,6 +70,12 @@ def main(argv: list[str] | None = None) -> None:
     sleep = sub.add_parser("sleep", help="run the nightly sleep jobs (M6)")
     sleep.add_argument("--config", type=Path)
 
+    lat = sub.add_parser("latency", help="where each spoken turn's time went, and the M1 exit check")
+    lat.add_argument("--config", type=Path, help="the body's config (default: config/body.toml)")
+    lat.add_argument("--session", help="session id, e.g. day-0001_2026-10-29 (default: the latest)")
+    lat.add_argument("--min-turns", type=int, default=20)
+    lat.add_argument("--all", action="store_true", help="the whole session, not just the latest run of the body")
+
     check = sub.add_parser("audio-check", help="body: test the mic, speaker and echo cancellation")
     check.add_argument("--config", type=Path)
     check.add_argument("--echo-delay-ms", type=float, help="try this echo delay hint instead of the config's")
@@ -90,6 +97,8 @@ def main(argv: list[str] | None = None) -> None:
             _new_day(args)
         elif args.command == "audio-check":
             _audio_check(args)
+        elif args.command == "latency":
+            _latency(args)
         elif args.command == "sleep":
             print("jason sleep: not implemented until M6; nothing to do.")
         else:
@@ -158,6 +167,24 @@ def _new_day(args: argparse.Namespace) -> None:
     if not result.ok:
         sys.exit(f"jason: {result.message}")
     print(result.message)
+
+
+def _latency(args: argparse.Namespace) -> None:
+    from jason.log.latency import analyze, last_run
+    from jason.log.rawlog import read_events
+
+    cfg = load_config(args.config or default_config("body"), "body")
+    folder = Path(cfg.state_dir) / "rawlog" / cfg.machine
+    files = sorted(folder.glob(f"{args.session or '*'}.jsonl"))
+    if not files:
+        sys.exit(f"jason: no raw log for {args.session or 'any session'} in {folder}")
+    path = files[-1]  # session ids sort by day number
+    events = list(read_events(path))
+    if not args.all:
+        events = last_run(events, cfg.machine)
+    print(f"{path.name}{'' if args.all else ', latest run'}\n")
+    for line in analyze(events).lines(min_turns=args.min_turns):
+        print(line)
 
 
 def _audio_check(args: argparse.Namespace) -> None:

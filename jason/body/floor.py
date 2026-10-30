@@ -86,18 +86,26 @@ class FloorController:
         self._first_played_ns = first_played_ns  # when a reply's first sample reached the speaker
         self.turn: _Turn | None = None
         self._last_jason_ns: int | None = None
-        self._watchers: set[asyncio.Task[None]] = set()
+        self._watchers: dict[str, asyncio.Task[None]] = {}  # decision id -> its first-audio watcher
 
     async def run(self) -> None:
         ticker = asyncio.create_task(self._tick_forever())
         mine = lambda e: e.machine == self.bus.machine  # noqa: E731: only this body's hearing
         try:
-            with self.bus.subscribe(ev.SpeechStart, ev.SpeechEnd, ev.TurnEndProb, ev.UserFinal, where=mine) as events:
+            types = (ev.SpeechStart, ev.SpeechEnd, ev.TurnEndProb, ev.UserFinal, ev.ReplyCancel)
+            with self.bus.subscribe(*types, where=mine) as events:
                 async for e in events:
-                    self.observe(e)
+                    if isinstance(e, ev.ReplyCancel):
+                        # Cancelled before its first sound (the user kept talking):
+                        # there will be no first audio to wait for.
+                        watcher = self._watchers.pop(e.payload.action_id, None)
+                        if watcher:
+                            watcher.cancel()
+                    else:
+                        self.observe(e)
         finally:
             ticker.cancel()
-            for w in self._watchers:
+            for w in self._watchers.values():
                 w.cancel()
 
     def observe(self, e: ev.Event) -> None:
@@ -170,8 +178,8 @@ class FloorController:
         self.bus.emit(ev.LatencyMark, ev.LatencyMarkPayload(
             stage=ev.LatencyStage.TURN_DECISION, duration_ns=now - t.pause_start_ns, ref_id=decision.id))
         watcher = asyncio.get_running_loop().create_task(self._first_audio(decision.id, t.pause_start_ns))
-        self._watchers.add(watcher)
-        watcher.add_done_callback(self._watchers.discard)
+        self._watchers[decision.id] = watcher
+        watcher.add_done_callback(lambda _: self._watchers.pop(decision.id, None))
 
     async def _first_audio(self, action_id: str, pause_start_ns: int, timeout_s: float = 15.0) -> None:
         """Time to first audio (the M1 exit criterion): from the user's last
