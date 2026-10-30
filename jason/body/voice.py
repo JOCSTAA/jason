@@ -27,7 +27,7 @@ from jason.core.config import BodyConfig
 
 
 async def voice_chat(bus: EventBus, cfg: BodyConfig, out: Callable[[str], None] = print) -> None:
-    audio = AudioIO(cfg.audio.input_device, cfg.audio.output_device)
+    audio = AudioIO.from_config(cfg.audio)
     listener = Listener(bus, audio, cfg.audio)
     transcriber = Transcriber(bus, listener, make_stt(cfg.stt), cfg.stt)
     speaker = Speaker(bus, audio, make_tts(cfg.tts), cfg.tts)

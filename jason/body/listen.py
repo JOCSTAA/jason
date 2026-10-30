@@ -11,6 +11,10 @@ in each 32 ms slice. A small hysteresis turns that into events:
   click doesn't count, at the cost of ~64 ms of barge-in reaction.
 - a pause is `pause_ms` below `vad_off_threshold` (a lower bar, so speech
   that dips briefly doesn't end).
+- for `onset_guard_ms` (600 ms) after Jason starts speaking from silence,
+  speech must last `onset_guard_speech_ms` (400 ms) to start: the echo
+  canceller can leak his first word there, which looked like the user
+  cutting in (7 of 15 barge-ins in the first live test, all 96-352 ms long).
 
 One utterance is one turn of the user's: a pause doesn't end it, so "so I
 was thinking... [pause] ...we could" stays one utterance with one id, and
@@ -100,13 +104,16 @@ class VoiceActivity:
         self._speech_start = 0
         self._last_voiced_end = 0
 
-    def update(self, prob: float, chunk_ns: int) -> Transition | None:
+    def update(self, prob: float, chunk_ns: int, start_chunks: int | None = None) -> Transition | None:
+        """start_chunks overrides the usual number of loud slices needed to
+        start speech (the listener raises it just after Jason starts talking)."""
+        needed = start_chunks or self.start_chunks
         if not self.speaking:
             if prob >= self.on:
                 if self._run == 0:
                     self._run_start = chunk_ns
                 self._run += 1
-                if self._run >= self.start_chunks:
+                if self._run >= needed:
                     self.speaking, self._quiet = True, 0
                     self._speech_start = self._run_start
                     self._last_voiced_end = chunk_ns + CHUNK_NS
@@ -205,7 +212,7 @@ class Listener:
             self._utterance.append(chunk)
         else:
             self._recent.append(chunk)
-        t = self.activity.update(prob, chunk_ns)
+        t = self.activity.update(prob, chunk_ns, self._start_chunks(chunk_ns))
         if t is None:
             self._maybe_expire(chunk_ns)
         elif t.kind == "start":
@@ -218,6 +225,14 @@ class Listener:
             self.bus.emit(ev.SpeechEnd, ev.SpeechEndPayload(
                 utterance_id=self.utterance_id, audio_ns=t.audio_ns, speech_ms=t.speech_ms))
             self._score_turn(self.utterance_id, self.utterance_audio())
+
+    def _start_chunks(self, chunk_ns: int) -> int | None:
+        """Stricter while Jason's speech is just starting: the echo canceller
+        can leak his first word, which would look like the user cutting in."""
+        since = getattr(self.audio.playback, "speaking_since_ns", None)
+        if since is None or chunk_ns - since >= self.cfg.onset_guard_ms * 1e6:
+            return None
+        return max(self.cfg.start_chunks, round(self.cfg.onset_guard_speech_ms / 32))
 
     def _score_turn(self, utterance_id: str, audio: np.ndarray) -> None:
         async def score() -> None:
@@ -254,7 +269,7 @@ async def show_listening(
     and (with an [stt] config) what speech-to-text makes of it."""
     from jason.body.stt import Transcriber, make_backend
 
-    audio = AudioIO(cfg.input_device, cfg.output_device)
+    audio = AudioIO.from_config(cfg)
     listener = Listener(bus, audio, cfg)
     tasks = []
     if stt is not None:

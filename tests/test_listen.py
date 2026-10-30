@@ -63,7 +63,7 @@ def test_a_pause_is_200ms_below_the_lower_threshold():
 
 class FakeAudio:
     def __init__(self):
-        self.playback = SimpleNamespace(busy=False)
+        self.playback = SimpleNamespace(busy=False, speaking_since_ns=None)
 
 
 def loud(prob_audio):
@@ -199,3 +199,33 @@ def test_silero_hears_the_voice_clip_and_not_silence():
     assert np.mean(np.array(probs) >= 0.5) > 0.6
     vad.reset()
     assert max(vad(np.zeros(CHUNK, dtype=np.float32)) for _ in range(20)) < 0.1
+
+
+# --- just after Jason starts talking ------------------------------------------------------
+
+
+def starts(out):
+    return [e for e in drain(out) if e.type == "speech_start"]
+
+
+async def test_a_short_sound_just_after_jason_starts_is_ignored(setup):
+    t0 = 1_000_000_000
+    setup.audio.playback.busy, setup.audio.playback.speaking_since_ns = True, t0
+    say(setup.listener, [1] * 10 + [0] * 8, t0_ns=t0)  # 320 ms: like a leaked first word
+    assert starts(setup.out) == []
+
+
+async def test_a_real_interruption_just_after_jason_starts_still_counts(setup):
+    t0 = 1_000_000_000
+    setup.audio.playback.busy, setup.audio.playback.speaking_since_ns = True, t0
+    say(setup.listener, [1] * 14 + [0] * 8, t0_ns=t0)  # 450 ms of speech
+    [start] = starts(setup.out)
+    assert start.payload.during_agent_speech is True
+    assert start.payload.audio_ns == t0  # still timed from when the sound began
+
+
+async def test_later_in_his_reply_the_usual_rule_applies(setup):
+    t0 = 1_000_000_000
+    setup.audio.playback.busy, setup.audio.playback.speaking_since_ns = True, t0 - 2_000_000_000
+    say(setup.listener, [1] * 4 + [0] * 8, t0_ns=t0)  # 2 s into his reply: 3 slices are enough
+    assert len(starts(setup.out)) == 1

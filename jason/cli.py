@@ -6,7 +6,7 @@
     jason new-day [--role brain|body] [--config PATH]
     jason sleep [--config PATH]
     jason gen-token [--file PATH] [--force]
-    jason audio-check [--config PATH]
+    jason audio-check [--config PATH] [--echo-delay-ms MS]
 
 Without --config, each command uses config/<role>.toml from the repo.
 """
@@ -71,6 +71,7 @@ def main(argv: list[str] | None = None) -> None:
 
     check = sub.add_parser("audio-check", help="body: test the mic, speaker and echo cancellation")
     check.add_argument("--config", type=Path)
+    check.add_argument("--echo-delay-ms", type=float, help="try this echo delay hint instead of the config's")
 
     gen = sub.add_parser("gen-token", help="create the link auth token")
     gen.add_argument("--file", type=Path, default=DEFAULT_TOKEN_FILE, help="where to write it")
@@ -165,8 +166,11 @@ def _audio_check(args: argparse.Namespace) -> None:
         from jason.body.audio_check import run_check
     except ImportError as e:
         sys.exit(f"jason: the body's audio libraries aren't installed ({e.name}); run `uv sync --extra body`")
-    echo, voice = asyncio.run(run_check(cfg.audio))
-    if not (echo.ok and voice.ok):
+    audio = cfg.audio
+    if args.echo_delay_ms is not None:
+        audio = audio.model_copy(update={"echo_delay_ms": args.echo_delay_ms})
+    echo, voice, onsets = asyncio.run(run_check(audio))
+    if not (echo.ok and voice.ok and onsets.ok):
         sys.exit(1)
 
 

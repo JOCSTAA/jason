@@ -6,7 +6,10 @@ cancellation, how long sound takes from speaker to mic, and whether any audio
 blocks were dropped. Then it plays a clip of Jason's voice and reports how
 often the VAD hears speech in the mic: it should be close to never with echo
 cancellation (the M1 spike: 0.1%) against most of the time without (83%).
-Stay quiet while it runs (about 20 s).
+Last, it starts Jason's voice three times after 3 s of silence, as in a
+conversation, and checks the VAD doesn't hear any of those starts: the echo
+canceller is weakest right after a silence, and a leaked first word looks
+like the user cutting in (barge-in). Stay quiet while it runs (about 35 s).
 """
 
 import asyncio
@@ -23,6 +26,8 @@ from jason.core.config import AudioConfig
 
 LEAD_S, SIGNAL_S, TAIL_S = 1.5, 6.0, 2.0
 VOICE_GAP_S, VOICE_TAIL_S = 1.0, 1.0
+ONSETS, ONSET_GAP_S, ONSET_VOICE_S = 3, 3.0, 2.0
+ONSET_WINDOW_S = 0.8  # where a leaked first word would trigger a barge-in
 SETTLE_S = 1.0  # AEC3 adapts to the room in the first second; don't score it
 
 
@@ -89,6 +94,42 @@ class VoiceResult:
         ]
 
 
+def would_trigger(mic48: np.ndarray, model_file: Path, run: int = 3) -> bool:
+    """Would the listener start speech here: `run` loud 32 ms slices in a row?"""
+    from jason.body.listen import CHUNK, Silero
+
+    vad = Silero(model_file)
+    x = soxr.resample(mic48, IO_SR, MIC_SR).astype(np.float32)
+    streak = 0
+    for i in range(0, len(x) - CHUNK + 1, CHUNK):
+        streak = streak + 1 if vad(x[i:i + CHUNK]) >= 0.5 else 0
+        if streak >= run:
+            return True
+    return False
+
+
+@dataclass
+class OnsetResult:
+    triggered: int  # starts where the VAD would have heard Jason as the user
+    total: int
+    delay_hint_ms: float
+    measured_delay_ms: float
+
+    @property
+    def ok(self) -> bool:
+        return self.triggered == 0
+
+    def lines(self) -> list[str]:
+        out = [f"Jason starting after a silence heard as you: {self.triggered} of {self.total} starts "
+               f"(echo delay hint {self.delay_hint_ms:.0f} ms)",
+               "OK: his first words don't trigger a barge-in" if self.ok else
+               "PROBLEM: his first words leak and would cut him off (a false barge-in)"]
+        if abs(self.delay_hint_ms - self.measured_delay_ms) > 20:
+            out.append(f"Set echo_delay_ms = {self.measured_delay_ms:.0f} in config/body.toml [audio] "
+                       "(the measured speaker -> mic delay)")
+        return out
+
+
 @dataclass
 class CheckResult:
     noise_dbfs: float
@@ -135,16 +176,21 @@ def score(timeline: np.ndarray, raw: np.ndarray, clean: np.ndarray, status_flags
     )
 
 
-async def run_check(cfg: AudioConfig, out: Callable[[str], None] = print) -> tuple[CheckResult, VoiceResult]:
+async def run_check(
+    cfg: AudioConfig, out: Callable[[str], None] = print
+) -> tuple[CheckResult, VoiceResult, OnsetResult]:
     signal = speechlike_signal()
     voice, voice_sr = read_wav(cfg.assets() / "voice_check.wav")
     voice = soxr.resample(voice, voice_sr, IO_SR).astype(np.float32)
+    start_clip = voice[: int(ONSET_VOICE_S * IO_SR)]
+    onsets = [np.concatenate([np.zeros(int(ONSET_GAP_S * IO_SR)), start_clip]) for _ in range(ONSETS)]
     timeline = np.concatenate([
         np.zeros(int(LEAD_S * IO_SR)), signal, np.zeros(int(TAIL_S * IO_SR)),
         np.zeros(int(VOICE_GAP_S * IO_SR)), voice, np.zeros(int(VOICE_TAIL_S * IO_SR)),
+        *onsets, np.zeros(int(1.0 * IO_SR)),
     ]).astype(np.float32)
     out(f"Stay quiet: playing test sounds for {len(timeline) / IO_SR:.0f} s ...")
-    io = AudioIO(cfg.input_device, cfg.output_device, keep_raw=True)
+    io = AudioIO.from_config(cfg, keep_raw=True)
     io.start()
     try:
         io.play("check", timeline, IO_SR)
@@ -157,6 +203,13 @@ async def run_check(cfg: AudioConfig, out: Callable[[str], None] = print) -> tup
     v1 = v0 + len(voice) + int(0.5 * IO_SR)  # and the half second after, where echo could linger
     model = cfg.assets() / "silero_vad.onnx"
     voice_result = VoiceResult(speech_percent(clean[v0:v1], model), speech_percent(raw[v0:v1], model))
-    for line in result.lines() + voice_result.lines():
+    o = v1 - int(0.5 * IO_SR) + int(VOICE_TAIL_S * IO_SR)  # where the onset section begins
+    triggered = 0
+    for _ in range(ONSETS):
+        start = o + int(ONSET_GAP_S * IO_SR)
+        triggered += would_trigger(clean[start:start + int(ONSET_WINDOW_S * IO_SR)], model)
+        o = start + len(start_clip)
+    onset_result = OnsetResult(triggered, ONSETS, io.canceller.delay_hint_ms, result.delay_ms)
+    for line in result.lines() + voice_result.lines() + onset_result.lines():
         out(line)
-    return result, voice_result
+    return result, voice_result, onset_result

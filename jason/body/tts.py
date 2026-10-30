@@ -277,7 +277,7 @@ class Speaker:
 @contextlib.asynccontextmanager
 async def speak_replies(bus: EventBus, cfg: BodyConfig, out: Callable[[str], None] = print):
     """Say the brain's replies out loud while the block runs (text mode with --speak)."""
-    audio = AudioIO(cfg.audio.input_device, cfg.audio.output_device)
+    audio = AudioIO.from_config(cfg.audio)
     speaker = Speaker(bus, audio, make_backend(cfg.tts), cfg.tts)
     out("Loading text-to-speech (the first time downloads the model, 330 MB) ...")
     await speaker.load()

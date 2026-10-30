@@ -16,6 +16,7 @@ clock_sync_s = 5.0                     # how often to measure clock offset and r
 [audio]
 input_device = ""                      # "" = the system default (python -m sounddevice lists devices)
 output_device = ""
+echo_delay_ms = 95.0                   # measured speaker -> mic delay on this Mac (jason audio-check prints it)
 assets_dir = "../assets"               # model files and the voice-check clip
 vad_threshold = 0.5                    # speech when Silero's probability is at least this ...
 start_chunks = 3                       # ... for 3 slices of 32 ms in a row
@@ -23,6 +24,8 @@ vad_off_threshold = 0.35               # a pause: below this ...
 pause_ms = 200.0                       # ... for 200 ms
 preroll_ms = 300.0
 new_utterance_after_s = 3.0
+onset_guard_ms = 600.0                 # just after Jason starts talking, his first word can leak ...
+onset_guard_speech_ms = 400.0          # ... so speech must last this long to count as the user
 
 [stt]
 backend = "parakeet-mlx"               # Apple Silicon only; a non-Mac body needs another backend

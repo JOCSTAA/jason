@@ -30,6 +30,7 @@ import numpy as np
 import soxr
 
 from jason.core import clock
+from jason.core.config import AudioConfig
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +103,10 @@ class Playback:
     _queue: deque[_Piece] = field(default_factory=deque)
     _played: dict[str, Played] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    # When the current stretch of Jason's speech began reaching the speaker
+    # (after a silence); None while silent. The listener is stricter just
+    # after it: that's where echo leaks (jason/body/listen.py).
+    speaking_since_ns: int | None = None
 
     def add(self, tag: str, samples: np.ndarray) -> None:
         with self._lock:
@@ -115,6 +120,8 @@ class Playback:
         out = np.zeros(n, dtype=np.float32)
         filled = 0
         with self._lock:
+            if self._queue and self.speaking_since_ns is None:
+                self.speaking_since_ns = dac_ns
             while filled < n and self._queue:
                 piece = self._queue[0]
                 take = min(n - filled, len(piece.samples) - piece.pos)
@@ -127,6 +134,8 @@ class Playback:
                 filled += take
                 if piece.pos >= len(piece.samples):
                     self._queue.popleft()
+            if not self._queue:
+                self.speaking_since_ns = None
         return out
 
     def stop(self, tag: str | None = None) -> None:
@@ -139,6 +148,8 @@ class Playback:
                 else:
                     keep.append(piece)
             self._queue = keep
+            if not keep:
+                self.speaking_since_ns = None
 
     def played(self, tag: str) -> Played | None:
         with self._lock:
@@ -186,7 +197,9 @@ class AudioIO:
         canceller: Callable[[int], object] = EchoCanceller,
         mic_queue_size: int = 500,  # 5 s of audio
         keep_raw: bool = False,  # also keep the uncancelled mic (audio-check only)
+        echo_delay_ms: float | None = None,  # measured speaker -> mic delay; None: PortAudio's figures
     ) -> None:
+        self._echo_delay_ms = echo_delay_ms
         self.playback = Playback()
         self.stats = AudioStats()
         self._devices = (input_device or None, output_device or None)
@@ -200,6 +213,10 @@ class AudioIO:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stream = None
 
+    @classmethod
+    def from_config(cls, cfg: AudioConfig, **kw) -> "AudioIO":
+        return cls(cfg.input_device, cfg.output_device, echo_delay_ms=cfg.echo_delay_ms, **kw)
+
     def start(self) -> None:
         self._loop = asyncio.get_running_loop()
         if self._stream_factory is None:
@@ -212,7 +229,11 @@ class AudioIO:
             latency=0.01, callback=self._callback,
         )
         lat_in, lat_out = self._stream.latency
-        self.canceller = self._make_canceller(int(round((lat_in + lat_out) * 1000)))
+        # The echo canceller's starting guess for the delay. PortAudio's figures
+        # overstate it on the Mac (228 ms vs ~95 measured), and with a wrong
+        # guess every reply's first word leaked into the mic after a silence.
+        hint = self._echo_delay_ms if self._echo_delay_ms is not None else (lat_in + lat_out) * 1000
+        self.canceller = self._make_canceller(int(round(hint)))
         self._stream.start()
 
     def stop(self) -> None:

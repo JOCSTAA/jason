@@ -230,3 +230,50 @@ async def test_real_audio_check():
 
     result = await run_check(AudioConfig(), out=lambda _: None)
     assert result.ok, "\n".join(result.lines())
+
+
+# --- onsets after a silence --------------------------------------------------------------
+
+
+def test_would_trigger_on_speech_not_on_silence():
+    pytest.importorskip("onnxruntime")
+    from jason.body.audio_check import read_wav, would_trigger
+    from jason.core.config import REPO_ASSETS
+
+    voice, sr = read_wav(REPO_ASSETS / "voice_check.wav")
+    voice48 = soxr.resample(voice, sr, IO_SR).astype(np.float32)
+    model = REPO_ASSETS / "silero_vad.onnx"
+    assert would_trigger(voice48[: IO_SR], model)
+    assert not would_trigger(np.zeros(IO_SR, dtype=np.float32), model)
+
+
+def test_onset_result_recommends_the_measured_delay_when_the_hint_is_off():
+    from jason.body.audio_check import OnsetResult
+
+    off = OnsetResult(triggered=2, total=3, delay_hint_ms=228, measured_delay_ms=95)
+    assert not off.ok and any("echo_delay_ms = 95" in line for line in off.lines())
+    close = OnsetResult(triggered=0, total=3, delay_hint_ms=95, measured_delay_ms=98)
+    assert close.ok and not any("echo_delay_ms" in line for line in close.lines())
+
+
+async def test_the_echo_delay_hint_comes_from_the_config_when_set():
+    streams = []
+    audio = AudioIO(stream_factory=lambda **kw: streams.append(FakeStream(**kw)) or streams[-1],
+                    canceller=FakeCanceller, echo_delay_ms=95)
+    audio.start()
+    assert audio.canceller.delay_hint_ms == 95  # not the stream's reported 50
+    audio.stop()
+
+
+def test_playback_knows_when_jasons_speech_began_after_a_silence():
+    pb = Playback()
+    assert pb.speaking_since_ns is None
+    pb.add("r1", np.ones(BLOCK * 3, dtype=np.float32))
+    pb.next_block(BLOCK, dac_ns=1_000)
+    pb.next_block(BLOCK, dac_ns=2_000)
+    assert pb.speaking_since_ns == 1_000  # the start of this stretch, not the latest block
+    pb.next_block(BLOCK, dac_ns=3_000)  # the last of it: silent again
+    assert pb.speaking_since_ns is None
+    pb.add("r2", np.ones(BLOCK, dtype=np.float32))
+    pb.stop()
+    assert pb.speaking_since_ns is None

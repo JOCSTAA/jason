@@ -75,6 +75,12 @@ class AudioConfig(_Strict):
 
     input_device: str = ""
     output_device: str = ""
+    # When Jason's voice reaches the mic after it's played, for the echo
+    # canceller. PortAudio's own latency figures are unreliable (on the M5 Air
+    # they add up to 228 ms; the real delay is ~95 ms), and a wrong hint makes
+    # the canceller leak the start of every reply after a silence. Set it from
+    # `jason audio-check`; None falls back to PortAudio's figures.
+    echo_delay_ms: Annotated[float, Field(ge=0, le=1000)] | None = None
     # Model files and the voice-check clip (committed in the repo's assets/).
     assets_dir: Path | None = None
     # Voice activity (jason/body/listen.py): speech starts after start_chunks
@@ -86,6 +92,13 @@ class AudioConfig(_Strict):
     pause_ms: Annotated[float, Field(gt=0)] = 200.0
     preroll_ms: Annotated[float, Field(ge=0)] = 300.0  # audio kept from just before speech starts
     new_utterance_after_s: Seconds = 3.0  # silence that ends an utterance nobody acted on
+    # Just after Jason starts speaking (from silence) the echo canceller can
+    # leak his first word, which looked like the user cutting in: in the first
+    # live barge-in test 7 of 15 barge-ins were his own first word (96-352 ms
+    # of "speech", 0.3-0.5 s into his reply). For onset_guard_ms after he
+    # starts, speech must last onset_guard_speech_ms to count.
+    onset_guard_ms: Annotated[float, Field(ge=0)] = 600.0
+    onset_guard_speech_ms: Annotated[float, Field(ge=0)] = 400.0
 
     def assets(self) -> Path:
         return self.assets_dir or REPO_ASSETS
