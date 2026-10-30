@@ -15,7 +15,7 @@ MODULES = [
     "jason.net.protocol",
     "jason.net.admin",
     "jason.log.rawlog",
-    "jason.mac.main",
+    "jason.body.main",
     "jason.brain.main",
 ]
 

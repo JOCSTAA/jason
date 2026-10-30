@@ -1,6 +1,6 @@
 # Jason — Design Doc
 
-_Last updated: 2026-10-30 (v2.8: §5.6 extended for a Jason with a body and for the owner's human reward-stimulus list)_
+_Last updated: 2026-10-30 (v2.9: the audio side is the portable `body` role, the Mac today; the body's audio stack decided, see `spikes/m1-mac-audio.md`)_
 
 Companion docs:
 - `decisions.md` — decision log (source of truth for what is decided)
@@ -9,6 +9,7 @@ Companion docs:
 - `spikes/m0-llm-serving.md` — performance comparison and decision for the serving engine
 - `spikes/m0-lora-training.md` — whether the live model can train on the 4090, and the merged nightly cycle
 - `spikes/m0-link-latency.md` — Mac↔brain round trips over Tailscale (1,000 pings)
+- `spikes/m1-mac-audio.md` — echo cancellation and the body's speech models on the Mac; portable (ONNX) versions compared
 
 **Status legend used in this doc:**
 - **[Decided]** — recorded in `decisions.md`.
@@ -54,7 +55,7 @@ SLEEP ─► 1 consolidate memory  2 train Wonder  3 test Wonder  4 dream (if Wo
 ### 3.2 Architecture and machine split [Decided]
 
 ```
- MAC (M5 Air) — ears, mouth, dev                 WINDOWS (RTX 4090 Laptop, 16 GB) — brain, gym
+ BODY (today: Mac M5 Air) — ears, mouth, dev     BRAIN (today: Windows RTX 4090 Laptop, 16 GB) — gym
  ┌──────────────────────────────────┐            ┌─────────────────────────────────────────┐
  │ Mic / speaker + echo cancellation│            │ LLM server (local, merged nightly)      │
  │ VAD + turn detection             │  LAN       │ Wonder (user/world simulator)           │
@@ -66,10 +67,11 @@ SLEEP ─► 1 consolidate memory  2 train Wonder  3 test Wonder  4 dream (if Wo
                                                        Hosted frontier API (judge / reflect / rewrite)
 ```
 
-- Audio never leaves the Mac; only typed events cross the LAN (`user_partial`, `turn_end_prob`, `agent_action`, `reaction`, `reward`, `wonder_prediction`, …).
+- Two roles, **body** and **brain**, each portable: the body (ears, mouth, floor controller) runs on the Mac today and may move to a separate machine; the brain runs on the Windows laptop today and may move to a cloud GPU (§3.4). Future sensors and motors (§5.6) attach to the body.
+- Audio never leaves the body's machine; only typed events cross the LAN (`user_partial`, `turn_end_prob`, `agent_action`, `reaction`, `reward`, `wonder_prediction`, …).
 - Every event is also appended to the raw log, so anything can be replayed and re-scored later.
 - The agent core must be able to start speaking on its own, not only after user input.
-- The camera joins later as another input stream on the Mac.
+- The camera joins later as another input stream on the body.
 
 ### 3.3 Models
 
@@ -77,11 +79,11 @@ Every model in the agent, where it runs, what it does, and how (or whether) it i
 
 | # | Model | Runs on | Job | How it is trained / updated | Status |
 |---|---|---|---|---|---|
-| 1 | **Silero VAD** | Mac (CPU) | Detects whether someone is speaking | Pretrained; frozen | Recommended (§11) |
-| 2 | **Smart Turn v3.x** (~8M params) | Mac (CPU) | Probability that the user has finished their turn; input to the floor controller | Pretrained; frozen | Recommended (§11) |
-| 3 | **Parakeet TDT 0.6B** | Mac | Streaming speech-to-text | Pretrained; frozen | Recommended (§11) |
-| 4 | **Kokoro-82M** | Mac | Text-to-speech | Pretrained; frozen. Later swap to Chatterbox or Cartesia | Recommended (§11) |
-| 5 | **Floor-controller policy** (contextual bandit; small actor-critic later) | Acts on the Mac; learner on Windows | Chooses silent / backchannel / respond / interject / ask / `think()` | Starts rule-based. Then learned from scratch: **updated live after each attributed reward**; retrained during sleep on real replay (plus dreams from M9); behind the frozen/learner swap and eval gate. Validated on the simulated user first | Approach [Decided]; library [Open] (Vowpal Wabbit or small PyTorch) |
+| 1 | **Silero VAD** v6 | Body (CPU, `onnxruntime`) | Detects whether someone is speaking | Pretrained; frozen | [Decided] |
+| 2 | **Smart Turn v3.2** (~8M params) | Body (CPU, `onnxruntime`) | Probability that the user has finished their turn; input to the floor controller | Pretrained; frozen | [Decided] |
+| 3 | **Parakeet TDT 0.6B v3** | Body (Mac: MLX) | Speech-to-text, re-transcribing the whole utterance as it grows (its streaming mode is slower than real time) | Pretrained; frozen | [Decided]; backend swappable for a non-Mac body |
+| 4 | **Kokoro-82M** | Body (Mac: MLX) | Text-to-speech | Pretrained; frozen. Later swap to Chatterbox or Cartesia | [Decided]; backend swappable for a non-Mac body |
+| 5 | **Floor-controller policy** (contextual bandit; small actor-critic later) | Acts on the body; learner on the brain | Chooses silent / backchannel / respond / interject / ask / `think()` | Starts rule-based. Then learned from scratch: **updated live after each attributed reward**; retrained during sleep on real replay (plus dreams from M9); behind the frozen/learner swap and eval gate. Validated on the simulated user first | Approach [Decided]; library [Open] (Vowpal Wabbit or small PyTorch) |
 | 6 | **Qwen3.5-4B (bf16) + one LoRA, merged nightly** | Windows 4090 | Main LLM: generates what Jason says. Also the default host for models 7 and 9 until they get their own | Base weights frozen. **Only the LoRA trains, during sleep**: context distillation + DPO on corrections, with replay; only with ≥ ~200 new labeled examples and a passed eval gate; merged into the weights and served from them next morning (no LoRA at serving time) | [Decided]; served by vLLM, bf16 |
 | 7 | **Reaction judge** | Windows (if local) | Classifies each user utterance: is it feedback, which action it targets, polarity, strength (§5.3 B) | Live labels are re-scored nightly by model 10; those re-scored labels can later train a dedicated small classifier | [Open] (needed by M3): the live LLM with a prompt, or a small separate classifier |
 | 8 | **Embedding model** | Windows | Turns memory entries and queries into vectors for long-term memory search (§8.4) | Pretrained; frozen. Changing it means re-embedding the whole store | [Open] (needed by M2) |
@@ -96,7 +98,7 @@ Not counted: echo cancellation (WebRTC AEC / macOS voice-processing I/O) is sign
 
 ### 3.4 Portability: cloud brain [Decided]
 
-The Windows laptop may later be replaced or supplemented by a rented cloud GPU for more compute. The Mac keeps everything time-critical (audio, VAD, turn detection, STT, TTS, floor controller), so the brain can move without a redesign, as long as M0 is built for it.
+The Windows laptop may later be replaced or supplemented by a rented cloud GPU for more compute. The body (the Mac today) keeps everything time-critical (audio, VAD, turn detection, STT, TTS, floor controller), so the brain can move without a redesign, as long as M0 is built for it.
 
 **Two ways to add compute:**
 
@@ -109,11 +111,13 @@ The Windows laptop may later be replaced or supplemented by a rented cloud GPU f
 
 **M0 portability rules** (cheap now, expensive to retrofit):
 1. The brain's address is configuration; nothing assumes the LAN or Windows paths.
-2. Mac↔brain transport works over the internet from day one (e.g. WebSocket or gRPC over a Tailscale/WireGuard network), so home LAN and cloud look the same to the code.
+2. Body↔brain transport works over the internet from day one (e.g. WebSocket or gRPC over a Tailscale/WireGuard network), so home LAN and cloud look the same to the code.
 3. Brain services are containerized (Docker with CUDA) so one image runs on Windows (WSL2) and on cloud Linux.
 4. All of Jason's state (memory, raw log, adapters, policy versions) lives in one versioned location that can be synced or moved.
 5. Serving and sleep jobs are separate processes, so either can move on its own.
 6. Network round-trip time is logged as its own latency stage.
+
+**The body is portable too [Decided].** The ears and mouth may later run on a machine that isn't a Mac. Echo cancellation (WebRTC AEC3), Silero and Smart Turn already run anywhere. Parakeet and Kokoro use MLX, which runs only on Apple Silicon; on the Mac their portable ONNX versions were 37–47% (speech-to-text) and 65% to 3.2× (first audio) slower (`spikes/m1-mac-audio.md`), so they stay on MLX behind swappable backends. Moving the body means adding a backend for the new machine (ONNX or CUDA) and measuring it there. A machine too weak for speech models would need audio to stream to the brain instead, which changes "audio never leaves the body's machine"; not planned.
 
 **Reminder before the brain leaves the home network** (travel or cloud): restrict port 8765 to Tailscale. Today Docker's firewall rules open it to the home LAN, and only the link token protects it.
 
@@ -394,7 +398,7 @@ Neutral but important facts (no reaction) are protected by the use and explicit-
 - Floor-controller inputs: VAD state, pause length, Smart Turn end-of-turn probability, streaming partial transcript, pending question queue (from curiosity), recent reactions, time since Jason last spoke.
 - Start rule-based (thresholds), then replace with a learned contextual bandit. Research (Microsoft RESPOND, 2026) exposes "backchannel intensity" and "turn-claim aggressiveness" as dials, which are natural knobs for the policy to learn per context.
 - **Barge-in:** if the user speaks while Jason talks, stop TTS within ~200 ms and log a mild negative for the interrupted action.
-- **Self-hearing:** echo cancellation on the Mac (WebRTC AEC or macOS voice-processing I/O) plus mic gating while speaking.
+- **Self-hearing:** echo cancellation on the body (WebRTC AEC3, with what Jason plays as the reference). In the M1 spike no echo lingered after Jason stopped, so the mic stays open while he speaks (which barge-in needs); muting the mic is only a fallback.
 - Rate limits on `interject` and `ask` as a safety net while the policy is young.
 - Full-duplex speech-to-speech models (PersonaPlex/Moshi) are not used for now: no text-level hooks for memory and learning. Revisit if that changes.
 
@@ -419,11 +423,11 @@ Neutral but important facts (no reaction) are protected by the use and explicit-
 | Prompt optimization | DSPy GEPA | Manual | |
 | Memory | Own: text entries + search index (e.g. LanceDB / sqlite-vec) | Mem0 as temporary baseline; Letta; Graphiti | |
 | Wonder | Same LLM + "predict user" prompt → dedicated adapter / 2–4B model | — | |
-| VAD / turn | Silero VAD + Smart Turn v3.x | — | |
-| STT | Parakeet TDT 0.6B (Mac) | Kyutai STT; hosted | |
-| TTS | Kokoro-82M → later Chatterbox or Cartesia | ElevenLabs | |
-| Echo cancellation | WebRTC AEC / macOS voice-processing I/O | — | |
-| Hardware | Mac = audio + controller; Windows 4090 = LLM, memory, learner, sleep | Everything on Windows | **Split; Windows is an always-on server on Ethernet, on overnight** |
+| VAD / turn | Silero VAD + Smart Turn v3.x | — | **Silero v6 + Smart Turn v3.2 on `onnxruntime`** |
+| STT | Parakeet TDT 0.6B (Mac) | Kyutai STT; hosted | **Parakeet TDT 0.6B v3 via `parakeet-mlx`, whole-utterance re-transcription; ONNX backend for a non-Mac body** |
+| TTS | Kokoro-82M → later Chatterbox or Cartesia | ElevenLabs | **Kokoro-82M via `mlx-audio`; ONNX backend for a non-Mac body** |
+| Echo cancellation | WebRTC AEC / macOS voice-processing I/O | — | **WebRTC AEC3 via `livekit`, audio I/O via `sounddevice`** |
+| Hardware | Mac = audio + controller; Windows 4090 = LLM, memory, learner, sleep | Everything on Windows | **Split into body (Mac today) and brain (Windows today), both portable; Windows is an always-on server on Ethernet, on overnight** |
 
 Budget: Stack A ≈ $20–70/month (night-time API + optional hosted TTS). Hosted-brain alternative ≈ $80–250/month.
 

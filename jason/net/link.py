@@ -1,32 +1,32 @@
 """WebSocket server and client that bridge events between the two buses.
 
-    MAC                                                  BRAIN
+    BODY                                                 BRAIN
   [bus] ⇄ LinkClient ══ WebSocket (over Tailscale) ══ LinkServer ⇄ [bus]
 
 A WebSocket is a connection that stays open so either side can send a
-message at any moment. The brain listens (server); the Mac dials in (client).
+message at any moment. The brain listens (server); the body dials in (client).
 
 - Sending: each side subscribes to everything on its own bus and sends the
   events this machine created. Events that came from the other machine are
   never sent back, or every event would bounce between the two forever.
 - Receiving: events from the other side are published on the local bus, so
   they are logged here too and reach local subscribers.
-- Auth: the Mac sends the shared token in the handshake's Authorization
+- Auth: the body sends the shared token in the handshake's Authorization
   header; the brain refuses the connection (HTTP 401) before it opens if the
   token is wrong or missing.
 - Heartbeat: websockets' built-in pings. No reply within timeout_s means the
-  connection is dead, and the Mac starts reconnecting.
+  connection is dead, and the body starts reconnecting.
 - While disconnected, this machine's events wait in the link's bus
   subscription (up to 1000, oldest dropped first) and are sent after
   reconnecting. Each machine's raw log has them either way.
 - Admin: the brain also accepts short-lived connections at the /admin path
   (same token) that send one command, e.g. "new_day" from `jason new-day`.
-  They don't replace the Mac's connection.
-- Clock sync: every clock_sync_s the Mac sends a probe and the brain answers
+  They don't replace the body's connection.
+- Clock sync: every clock_sync_s the body sends a probe and the brain answers
   with its own timestamps (net/clocksync.py). Each round trip is logged as a
   latency_mark with stage "network_rtt"; the offset estimate is logged as a
   "clock_offset" system event when it changes by more than 1 ms, or once a
-  minute. Both reach the brain's log too, like any Mac event.
+  minute. Both reach the brain's log too, like any body event.
 """
 
 import asyncio
@@ -46,7 +46,7 @@ from websockets.http11 import Request, Response
 from jason.core import clock
 from jason.core import events as ev
 from jason.core.bus import EventBus
-from jason.core.config import BrainLink, MacLink
+from jason.core.config import BrainLink, BodyLink
 from jason.core.events import SCHEMA_VERSION
 from jason.net.clocksync import ClockSync, Sample
 from jason.net.protocol import (
@@ -174,7 +174,7 @@ def _parse(raw: str | bytes) -> AnyMessage | None:
 
 
 class LinkServer:
-    """Runs on the brain. Accepts one Mac at a time; a newer connection replaces an older one."""
+    """Runs on the brain. Accepts one body at a time; a newer connection replaces an older one."""
 
     def __init__(
         self,
@@ -193,7 +193,7 @@ class LinkServer:
         self._rejected_suppressed = 0
         self._bridge = _Bridge(bus, outbox_size)
         self._server: Server | None = None
-        self._ws: ServerConnection | None = None  # the Mac currently connected
+        self._ws: ServerConnection | None = None  # the body currently connected
         self._latest: ServerConnection | None = None  # the newest connection to arrive
         self._active = asyncio.Lock()  # held by whichever connection is being served
 
@@ -221,7 +221,7 @@ class LinkServer:
         self._bridge.close()
 
     async def set_session(self, session_id: str) -> None:
-        """Start using a new session (a new day) and tell the Mac."""
+        """Start using a new session (a new day) and tell the body."""
         self.bus.session_id = session_id
         if self._ws is not None:
             with contextlib.suppress(ConnectionClosed):
@@ -291,7 +291,7 @@ class LinkServer:
             await ws.send(encode(result))
 
     async def _serve(self, ws: ServerConnection) -> None:
-        assert self.bus.session_id is not None, "the brain needs a session before accepting the Mac"
+        assert self.bus.session_id is not None, "the brain needs a session before accepting the body"
         await ws.send(encode(Hello(machine=self.bus.machine, session_id=self.bus.session_id)))
         _system(self.bus, "link_up", peer=str(ws.remote_address))
         self._bridge.report_drops()
@@ -307,7 +307,7 @@ class LinkServer:
                     reply = SyncReply(t1_ns=msg.t1_ns, t2_ns=received, t3_ns=clock.monotonic_ns())
                     await ws.send(encode(reply))
                 elif msg is not None:
-                    log.warning("ignored a %s message from the Mac", msg.kind)
+                    log.warning("ignored a %s message from the body", msg.kind)
         except ConnectionClosed as e:
             reason = str(e)
         finally:
@@ -317,13 +317,13 @@ class LinkServer:
             _system(self.bus, "link_down", reason, peer=str(ws.remote_address))
 
 
-# --- Mac side -----------------------------------------------------------------
+# --- Body side ----------------------------------------------------------------
 
 
 class LinkClient:
-    """Runs on the Mac. Connects to the brain and keeps reconnecting until stopped."""
+    """Runs on the body. Connects to the brain and keeps reconnecting until stopped."""
 
-    def __init__(self, bus: EventBus, cfg: MacLink, token: str, outbox_size: int = 1000) -> None:
+    def __init__(self, bus: EventBus, cfg: BodyLink, token: str, outbox_size: int = 1000) -> None:
         self.bus = bus
         self.cfg = cfg
         self._token = token
@@ -331,7 +331,7 @@ class LinkClient:
         # Set once the brain has told us the session, i.e. once emit() works.
         self.ready = asyncio.Event()
         self.connected = asyncio.Event()
-        # Offset between the Mac's and the brain's monotonic clocks.
+        # Offset between the body's and the brain's monotonic clocks.
         self.clocksync = ClockSync()
         self._logged_offset: tuple[int, int] | None = None  # (offset_ns, when logged)
 
@@ -377,7 +377,7 @@ class LinkClient:
         if (msg.protocol_version, msg.schema_version) != (PROTOCOL_VERSION, SCHEMA_VERSION):
             raise LinkVersionError(
                 f"brain runs protocol {msg.protocol_version} / schema {msg.schema_version}, "
-                f"this Mac runs protocol {PROTOCOL_VERSION} / schema {SCHEMA_VERSION}; "
+                f"this body runs protocol {PROTOCOL_VERSION} / schema {SCHEMA_VERSION}; "
                 "update both machines to the same version of Jason"
             )
         if msg.machine == self.bus.machine:
@@ -436,7 +436,7 @@ class LinkClient:
             _system(
                 self.bus,
                 "clock_offset",
-                "brain clock minus Mac clock",
+                "brain clock minus body clock",
                 offset_ns=best.offset_ns,
                 error_ns=best.error_ns,
                 rtt_ns=best.rtt_ns,

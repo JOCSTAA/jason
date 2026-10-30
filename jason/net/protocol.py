@@ -1,12 +1,12 @@
-"""Messages sent over the Mac↔brain WebSocket.
+"""Messages sent over the body↔brain WebSocket.
 
 Every WebSocket message is one JSON object with a "kind" field:
 
-    hello        brain → Mac, the first message on every connection
-    new_session  brain → Mac, when a new day starts
+    hello        brain → body, the first message on every connection
+    new_session  brain → body, when a new day starts
     event        either way, one bus event
-    sync         Mac → brain, a clock-sync probe (see net/clocksync.py)
-    sync_reply   brain → Mac, the brain's receive and send times for a probe
+    sync         body → brain, a clock-sync probe (see net/clocksync.py)
+    sync_reply   brain → body, the brain's receive and send times for a probe
 
 On the brain's separate /admin address (used by `jason new-day`):
 
@@ -51,7 +51,7 @@ class EventMsg(_Msg):
 
 class Sync(_Msg):
     kind: Literal["sync"] = "sync"
-    t1_ns: int  # Mac monotonic clock when sent
+    t1_ns: int  # body monotonic clock when sent
 
 
 class SyncReply(_Msg):

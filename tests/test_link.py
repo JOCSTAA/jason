@@ -11,7 +11,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from jason.core import events as ev
 from jason.core.bus import EventBus
-from jason.core.config import BrainLink, MacLink
+from jason.core.config import BrainLink, BodyLink
 from jason.log.rawlog import RawLog, read_events
 from jason.net import link as link_mod
 from jason.net.link import LinkAuthError, LinkClient, LinkServer, LinkVersionError
@@ -57,7 +57,7 @@ async def stop_brain(server, rawlog):
 def make_client(tmp_path, port, token=TOKEN, machine="mac", outbox_size=1000):
     rawlog = RawLog(tmp_path / f"{machine}-state", machine)
     bus = EventBus(machine, rawlog)  # no session: the brain provides it
-    cfg = MacLink(
+    cfg = BodyLink(
         brain_url=f"ws://127.0.0.1:{port}",
         token_file=Path("unused"),
         reconnect_max_s=0.2,
@@ -81,7 +81,7 @@ async def brain(tmp_path):
 
 
 @pytest.fixture
-async def mac(tmp_path, brain):
+async def body(tmp_path, brain):
     client, rawlog = make_client(tmp_path, brain.port)
     task = asyncio.create_task(client.run())
     await asyncio.wait_for(client.ready.wait(), 3)
@@ -96,39 +96,39 @@ async def mac(tmp_path, brain):
 # --- events cross, are logged on both sides, and don't echo -------------------
 
 
-async def test_hello_gives_the_mac_the_session(mac):
-    assert mac.bus.session_id == SESSION
+async def test_hello_gives_the_body_the_session(body):
+    assert body.bus.session_id == SESSION
 
 
-async def test_mac_event_reaches_brain_and_both_logs(tmp_path, brain, mac):
+async def test_body_event_reaches_brain_and_both_logs(tmp_path, brain, body):
     pings = brain.bus.subscribe(ev.Ping)
-    sent = mac.bus.emit(ev.Ping, ev.PingPayload(seq=1))
+    sent = body.bus.emit(ev.Ping, ev.PingPayload(seq=1))
     got = await asyncio.wait_for(pings.get(), 3)
     assert got == sent
     assert sent in logged(tmp_path, "mac")
     assert sent in logged(tmp_path, "brain")
 
 
-async def test_brain_event_reaches_mac(tmp_path, brain, mac):
-    pongs = mac.bus.subscribe(ev.Pong)
+async def test_brain_event_reaches_body(tmp_path, brain, body):
+    pongs = body.bus.subscribe(ev.Pong)
     sent = brain.bus.emit(ev.Pong, ev.PongPayload(ping_id="p", seq=1, ping_received_ns=0))
     assert await asyncio.wait_for(pongs.get(), 3) == sent
     assert sent in logged(tmp_path, "mac")
 
 
-async def test_events_do_not_echo_back(tmp_path, brain, mac):
-    mac_pings = mac.bus.subscribe(ev.Ping)
+async def test_events_do_not_echo_back(tmp_path, brain, body):
+    body_pings = body.bus.subscribe(ev.Ping)
     brain_pings = brain.bus.subscribe(ev.Ping)
-    sent = mac.bus.emit(ev.Ping, ev.PingPayload(seq=1))
+    sent = body.bus.emit(ev.Ping, ev.PingPayload(seq=1))
     await asyncio.wait_for(brain_pings.get(), 3)
     await asyncio.sleep(0.3)  # time for an echo to arrive, if there were one
-    assert await mac_pings.get() == sent
-    assert mac_pings._queue.empty()
+    assert await body_pings.get() == sent
+    assert body_pings._queue.empty()
     assert [e.id for e in logged(tmp_path, "mac")].count(sent.id) == 1
     assert [e.id for e in logged(tmp_path, "brain")].count(sent.id) == 1
 
 
-async def test_link_up_is_logged_on_both_sides(tmp_path, brain, mac):
+async def test_link_up_is_logged_on_both_sides(tmp_path, brain, body):
     await eventually(lambda: "link_up" in system_kinds(tmp_path, "brain"))
     await eventually(lambda: "link_up" in system_kinds(tmp_path, "mac"))
 
@@ -136,11 +136,11 @@ async def test_link_up_is_logged_on_both_sides(tmp_path, brain, mac):
 # --- sessions -----------------------------------------------------------------
 
 
-async def test_new_session_reaches_the_mac(tmp_path, brain, mac):
+async def test_new_session_reaches_the_body(tmp_path, brain, body):
     day2 = "day-0002_2026-10-29"
     await brain.set_session(day2)
-    await eventually(lambda: mac.bus.session_id == day2)
-    sent = mac.bus.emit(ev.Ping, ev.PingPayload(seq=1))
+    await eventually(lambda: body.bus.session_id == day2)
+    sent = body.bus.emit(ev.Ping, ev.PingPayload(seq=1))
     assert sent in logged(tmp_path, "mac", session=day2)
 
 
@@ -163,7 +163,7 @@ async def test_missing_token_is_rejected(brain):
 
 
 async def test_version_mismatch_is_refused(tmp_path, brain, monkeypatch):
-    monkeypatch.setattr(link_mod, "SCHEMA_VERSION", 999)  # pretend the Mac is newer
+    monkeypatch.setattr(link_mod, "SCHEMA_VERSION", 999)  # pretend the body is newer
     client, rawlog = make_client(tmp_path, brain.port)
     with pytest.raises(LinkVersionError, match="schema"):
         await asyncio.wait_for(client.run(), 3)
@@ -183,7 +183,7 @@ async def test_same_machine_name_is_refused(tmp_path, brain):
 async def test_reconnects_after_brain_restart_and_sends_what_waited(tmp_path):
     server, brain_log = await start_brain(tmp_path)
     port = server.port
-    client, mac_log = make_client(tmp_path, port)
+    client, body_log = make_client(tmp_path, port)
     task = asyncio.create_task(client.run())
     await asyncio.wait_for(client.ready.wait(), 3)
 
@@ -200,7 +200,7 @@ async def test_reconnects_after_brain_restart_and_sends_what_waited(tmp_path):
     with contextlib.suppress(asyncio.CancelledError):
         await task
     client.bus.close()
-    mac_log.close()
+    body_log.close()
     await stop_brain(server2, brain_log2)
 
 
@@ -247,15 +247,15 @@ async def test_incoming_event_claiming_to_be_local_is_dropped(brain):
 # --- clock sync ---------------------------------------------------------------
 
 
-async def test_clock_offset_is_estimated(mac):
-    await eventually(lambda: mac.clocksync.best is not None)
-    best = mac.clocksync.best
+async def test_clock_offset_is_estimated(body):
+    await eventually(lambda: body.clocksync.best is not None)
+    best = body.clocksync.best
     # Both "machines" share this computer's clock, so the true offset is 0.
     assert abs(best.offset_ns) <= best.error_ns + 1_000_000
     assert best.rtt_ns < 1_000_000_000
 
 
-async def test_round_trips_are_logged_as_network_rtt(tmp_path, brain, mac):
+async def test_round_trips_are_logged_as_network_rtt(tmp_path, brain, body):
     def rtt_marks(machine):
         return [
             e for e in logged(tmp_path, machine)
@@ -263,11 +263,11 @@ async def test_round_trips_are_logged_as_network_rtt(tmp_path, brain, mac):
         ]
 
     await eventually(lambda: len(rtt_marks("mac")) >= 3)
-    # Mac events reach the brain's log too.
+    # body events reach the brain's log too.
     await eventually(lambda: len(rtt_marks("brain")) >= 1)
 
 
-async def test_clock_offset_is_logged_but_not_every_sample(tmp_path, brain, mac):
+async def test_clock_offset_is_logged_but_not_every_sample(tmp_path, brain, body):
     await eventually(
         lambda: len([e for e in logged(tmp_path, "mac") if e.type == "latency_mark"]) >= 10
     )
@@ -324,21 +324,21 @@ def brain_file(tmp_path, session):
     return tmp_path / "brain-state" / "rawlog" / "brain" / f"{session}.jsonl"
 
 
-async def test_mac_events_from_before_a_new_day_land_in_the_new_days_file(tmp_path):
+async def test_body_events_from_before_a_new_day_land_in_the_new_days_file(tmp_path):
     day2 = "day-0002_2026-10-29"
     server, brain_log = await start_brain(tmp_path, port=free_port())
-    client, mac_log = make_client(tmp_path, server.port)
+    client, body_log = make_client(tmp_path, server.port)
     task = await run_client(client)
     pings = server.bus.subscribe(ev.Ping)
 
     await blip_down(server)
     await eventually(lambda: not client.connected.is_set())
-    await server.set_session(day2)  # a new day starts while the Mac can't hear it
+    await server.set_session(day2)  # a new day starts while the body can't hear it
     day1_before = brain_file(tmp_path, SESSION).read_bytes()
     late = [client.bus.emit(ev.Ping, ev.PingPayload(seq=i)) for i in range(3)]
     assert {e.session_id for e in late} == {SESSION}
 
-    await server.start()  # the blip ends; the Mac reconnects and sends its backlog
+    await server.start()  # the blip ends; the body reconnects and sends its backlog
     for _ in late:
         await asyncio.wait_for(pings.get(), 5)
 
@@ -346,13 +346,13 @@ async def test_mac_events_from_before_a_new_day_land_in_the_new_days_file(tmp_pa
     in_day2 = {e.id: e for e in read_events(brain_file(tmp_path, day2))}
     assert all(in_day2[e.id].session_id == SESSION for e in late)
 
-    await stop_client(client, task, mac_log)
+    await stop_client(client, task, body_log)
     await stop_brain(server, brain_log)
 
 
 async def test_outbox_overflow_is_reported_by_both_sides(tmp_path):
     server, brain_log = await start_brain(tmp_path, port=free_port())
-    client, mac_log = make_client(tmp_path, server.port, outbox_size=3)
+    client, body_log = make_client(tmp_path, server.port, outbox_size=3)
     task = await run_client(client)
     first = client.bus.emit(ev.Ping, ev.PingPayload(seq=0))
     await eventually(lambda: any(e.id == first.id for e in logged(tmp_path, "brain")))
@@ -371,13 +371,13 @@ async def test_outbox_overflow_is_reported_by_both_sides(tmp_path):
     reported = [e.payload.data for e in events if e.type == "system" and e.payload.kind == "link_backlog_dropped"]
     total_dropped = client._bridge._outbox.dropped
     assert total_dropped >= 8
-    # The brain's view (gaps in seq) matches exactly what the Mac's outbox dropped.
+    # The brain's view (gaps in seq) matches exactly what the body's outbox dropped.
     assert sum(g["missing"] for g in gaps) == total_dropped
     assert all(g["machine"] == "mac" and g["run_id"] == client.bus.run_id for g in gaps)
-    # The Mac's own report can trail by the drops its report itself caused.
+    # The body's own report can trail by the drops its report itself caused.
     assert 0 < reported[0]["count"] <= total_dropped
 
-    await stop_client(client, task, mac_log)
+    await stop_client(client, task, body_log)
     await stop_brain(server, brain_log)
 
 

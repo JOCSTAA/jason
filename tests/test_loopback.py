@@ -1,6 +1,6 @@
 """Loopback: both roles as separate processes on this machine, through the real CLI.
 
-This is the exit criterion rehearsed on one machine: the Mac sends pings, the
+This is the exit criterion rehearsed on one machine: the body sends pings, the
 brain replies, both raw logs hold both, and the round trip is printed.
 """
 
@@ -39,8 +39,8 @@ listen_host = "127.0.0.1"
 listen_port = {port}
 token_file = "{token_file.name}"
 """)
-    (tmp_path / "mac.toml").write_text(f"""
-role = "mac"
+    (tmp_path / "body.toml").write_text(f"""
+role = "body"
 machine = "mac"
 state_dir = "mac-state"
 [link]
@@ -97,9 +97,9 @@ class Brain:
         self.proc.stdout.close()
 
 
-def run_mac(tmp_path, *args, timeout=60):
+def run_body(tmp_path, *args, timeout=60):
     return subprocess.run(
-        [*JASON, "run", "--role", "mac", "--config", str(tmp_path / "mac.toml"), *args],
+        [*JASON, "run", "--role", "body", "--config", str(tmp_path / "body.toml"), *args],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -135,57 +135,57 @@ def test_loopback_ping_pong(setup):
     brain = Brain(tmp_path)
     try:
         brain.wait_for(r"brain listening on 127\.0\.0\.1:\d+, session day-0001_")
-        mac = run_mac(tmp_path, "--count", "3", "--every", "0.2")
-        assert mac.returncode == 0, mac.stdout + mac.stderr
-        assert len(re.findall(r"ping \d: [\d.]+ ms round trip", mac.stdout)) == 3
-        assert "3 pings: p50 " in mac.stdout
+        body = run_body(tmp_path, "--count", "3", "--every", "0.2")
+        assert body.returncode == 0, body.stdout + body.stderr
+        assert len(re.findall(r"ping \d: [\d.]+ ms round trip", body.stdout)) == 3
+        assert "3 pings: p50 " in body.stdout
     finally:
         brain.stop()
 
-    mac_events, brain_events = events(tmp_path, "mac"), events(tmp_path, "brain")
+    body_events, brain_events = events(tmp_path, "mac"), events(tmp_path, "brain")
     # The exit criterion: both raw logs contain both the pings and the pongs.
-    for evts in (mac_events, brain_events):
+    for evts in (body_events, brain_events):
         assert count(evts, "ping") == 3
         assert count(evts, "pong") == 3
-    stages = [e.payload.stage for e in mac_events if e.type == "latency_mark"]
+    stages = [e.payload.stage for e in body_events if e.type == "latency_mark"]
     assert stages.count("ping_rtt") == 3
     assert "network_rtt" in stages
-    assert {"startup", "link_up", "shutdown"} <= set(system_kinds(mac_events))
+    assert {"startup", "link_up", "shutdown"} <= set(system_kinds(body_events))
     assert "startup" in system_kinds(brain_events)
     if POSIX:  # a graceful stop is only possible with a real SIGTERM
         assert brain.proc.returncode == 0
         assert system_kinds(brain_events)[-1] == "shutdown"
 
 
-def test_mac_started_first_waits_for_the_brain(setup):
+def test_body_started_first_waits_for_the_brain(setup):
     tmp_path = setup
-    mac = subprocess.Popen(
-        [*JASON, "run", "--role", "mac", "--config", str(tmp_path / "mac.toml"),
+    body = subprocess.Popen(
+        [*JASON, "run", "--role", "body", "--config", str(tmp_path / "body.toml"),
          "--count", "1", "--every", "0.2"],
         cwd=tmp_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
-    time.sleep(1.5)  # the Mac retries while nothing is listening
-    assert mac.poll() is None
+    time.sleep(1.5)  # the body retries while nothing is listening
+    assert body.poll() is None
     brain = Brain(tmp_path)
     try:
-        out, _ = mac.communicate(timeout=60)
-        assert mac.returncode == 0, out
+        out, _ = body.communicate(timeout=60)
+        assert body.returncode == 0, out
         assert "1 pings: p50 " in out
     finally:
         brain.stop()
-        if mac.poll() is None:
-            mac.kill()
+        if body.poll() is None:
+            body.kill()
 
 
-def test_wrong_token_stops_the_mac_with_a_clear_message(setup):
+def test_wrong_token_stops_the_body_with_a_clear_message(setup):
     tmp_path = setup
     brain = Brain(tmp_path)
     try:
         brain.wait_for(r"brain listening")
-        generate_token(tmp_path / "link_token", overwrite=True)  # the Mac now has a different token
-        mac = run_mac(tmp_path, "--count", "1")
-        assert mac.returncode != 0
-        assert "rejected the link token" in mac.stderr
+        generate_token(tmp_path / "link_token", overwrite=True)  # the body now has a different token
+        body = run_body(tmp_path, "--count", "1")
+        assert body.returncode != 0
+        assert "rejected the link token" in body.stderr
     finally:
         brain.stop()
 
@@ -197,11 +197,11 @@ def test_brain_restart_continues_the_same_session(setup):
         brain = Brain(tmp_path)
         try:
             brain.wait_for(r"session day-0001_")
-            assert run_mac(tmp_path, "--count", "1", "--every", "0.2").returncode == 0
+            assert run_body(tmp_path, "--count", "1", "--every", "0.2").returncode == 0
         finally:
             brain.stop()
     brain_events = events(tmp_path, "brain")  # still one file: the same session
-    # The brain's log also holds the Mac's events, so count the brain's own.
+    # The brain's log also holds the body's events, so count the brain's own.
     own = [e for e in brain_events if e.machine == "brain"]
     assert system_kinds(own).count("startup") == 2
     assert count(brain_events, "pong") == 2

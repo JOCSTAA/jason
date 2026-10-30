@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from jason.core.config import (
     TOKEN_ENV,
     BrainConfig,
-    MacConfig,
+    BodyConfig,
     TokenError,
     generate_token,
     load_config,
@@ -18,8 +18,8 @@ from jason.core.config import (
 
 REPO_CONFIG = Path(__file__).parent.parent / "config"
 
-MAC_TOML = """
-role = "mac"
+BODY_TOML = """
+role = "body"
 machine = "mac"
 state_dir = "{state_dir}"
 [link]
@@ -34,8 +34,8 @@ def write(tmp_path, text, name="cfg.toml"):
     return path
 
 
-def mac_cfg(tmp_path, state_dir="state", token_file="link_token", **replace):
-    text = MAC_TOML.format(state_dir=state_dir, token_file=token_file)
+def body_cfg(tmp_path, state_dir="state", token_file="link_token", **replace):
+    text = BODY_TOML.format(state_dir=state_dir, token_file=token_file)
     for old, new in replace.items():
         text = text.replace(old, new)
     return write(tmp_path, text)
@@ -44,9 +44,9 @@ def mac_cfg(tmp_path, state_dir="state", token_file="link_token", **replace):
 # --- the committed config files ---------------------------------------------
 
 
-def test_committed_mac_config_loads():
-    cfg = load_config(REPO_CONFIG / "mac.toml", "mac")
-    assert isinstance(cfg, MacConfig)
+def test_committed_body_config_loads():
+    cfg = load_config(REPO_CONFIG / "body.toml", "body")
+    assert isinstance(cfg, BodyConfig)
     assert cfg.state_dir == Path("~/jason-data/state").expanduser()
     assert cfg.link.brain_url == "ws://jason-brain:8765"
 
@@ -65,13 +65,13 @@ def test_committed_brain_config_loads():
 
 def test_relative_paths_are_relative_to_the_config_file(tmp_path, monkeypatch):
     monkeypatch.chdir("/")  # the working directory must not matter
-    cfg = load_config(mac_cfg(tmp_path), "mac")
+    cfg = load_config(body_cfg(tmp_path), "body")
     assert cfg.state_dir == (tmp_path / "state").resolve()
     assert cfg.link.token_file == (tmp_path / "link_token").resolve()
 
 
 def test_tilde_means_home(tmp_path):
-    cfg = load_config(mac_cfg(tmp_path, state_dir="~/somewhere"), "mac")
+    cfg = load_config(body_cfg(tmp_path, state_dir="~/somewhere"), "body")
     assert cfg.state_dir == Path.home() / "somewhere"
 
 
@@ -80,26 +80,26 @@ def test_tilde_means_home(tmp_path):
 
 def test_wrong_role_rejected():
     with pytest.raises(ValueError, match="role"):
-        load_config(REPO_CONFIG / "brain.toml", "mac")
+        load_config(REPO_CONFIG / "brain.toml", "body")
 
 
 def test_misspelled_setting_rejected(tmp_path):
-    path = mac_cfg(tmp_path)
+    path = body_cfg(tmp_path)
     path.write_text(path.read_text() + "heartbeat_secs = 1.0\n")
     with pytest.raises(ValidationError):
-        load_config(path, "mac")
+        load_config(path, "body")
 
 
 def test_brain_url_must_be_websocket(tmp_path):
-    path = mac_cfg(tmp_path, **{"ws://jason-brain:8765": "http://jason-brain:8765"})
+    path = body_cfg(tmp_path, **{"ws://jason-brain:8765": "http://jason-brain:8765"})
     with pytest.raises(ValidationError):
-        load_config(path, "mac")
+        load_config(path, "body")
 
 
 def test_unsafe_machine_name_rejected(tmp_path):
-    path = mac_cfg(tmp_path, **{'machine = "mac"': 'machine = "../mac"'})
+    path = body_cfg(tmp_path, **{'machine = "mac"': 'machine = "../mac"'})
     with pytest.raises(ValidationError):
-        load_config(path, "mac")
+        load_config(path, "body")
 
 
 def test_bad_port_rejected(tmp_path):
@@ -116,10 +116,10 @@ token_file = "t"
 
 
 def test_negative_timeout_rejected(tmp_path):
-    path = mac_cfg(tmp_path)
+    path = body_cfg(tmp_path)
     path.write_text(path.read_text() + "timeout_s = -1\n")
     with pytest.raises(ValidationError):
-        load_config(path, "mac")
+        load_config(path, "body")
 
 
 # --- token ------------------------------------------------------------------
@@ -186,12 +186,12 @@ def test_token_path_that_is_a_folder_explains_the_docker_cause(tmp_path):
 
 
 def test_windows_backslash_path_gets_a_helpful_error(tmp_path):
-    path = write(tmp_path, MAC_TOML.format(state_dir="C:\\Users\\me\\state", token_file="t"))
+    path = write(tmp_path, BODY_TOML.format(state_dir="C:\\Users\\me\\state", token_file="t"))
     with pytest.raises(ValueError, match="forward slashes"):
-        load_config(path, "mac")
+        load_config(path, "body")
 
 
 def test_windows_paths_in_forward_slashes_or_single_quotes_load(tmp_path):
-    text = MAC_TOML.format(state_dir="C:/Users/me/state", token_file="t")
+    text = BODY_TOML.format(state_dir="C:/Users/me/state", token_file="t")
     text = text.replace('token_file = "t"', "token_file = 'C:\\Users\\me\\link_token'")
-    load_config(write(tmp_path, text), "mac")
+    load_config(write(tmp_path, text), "body")

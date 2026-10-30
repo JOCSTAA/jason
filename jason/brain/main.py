@@ -1,7 +1,7 @@
 """Brain-role entry point: `jason run --role brain`.
 
-In M0 the brain loads which day it is, accepts the Mac's link, and answers
-every ping from the Mac with a pong. Later milestones add the LLM, memory,
+In M0 the brain loads which day it is, accepts the body's link, and answers
+every ping from the body with a pong. Later milestones add the LLM, memory,
 learner and Wonder as more components on the same bus.
 """
 
@@ -55,7 +55,7 @@ class Brain:
         return self.server.port
 
     async def new_day(self) -> str:
-        """End today's session and start the next one; the Mac is told too."""
+        """End today's session and start the next one; the body is told too."""
         state = self._store.new_day()
         await self.server.set_session(state.session_id)
         self.bus.emit(

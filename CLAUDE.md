@@ -14,7 +14,7 @@ A voice agent that learns and grows in real time. Core priorities, in order:
 - Serving engine decision: @docs/spikes/m0-llm-serving.md
 
 ## Architecture and layout
-Two roles, one Python package (`jason/`). The **Mac** role runs audio and the floor controller; the **brain** role (Windows RTX 4090 today, possibly a cloud GPU later; runs in Docker) runs the LLM, memory, learner and sleep. Each machine has an in-process **event bus**; every event published on it is written to that machine's **raw log**, and a **WebSocket link** (over Tailscale, token-authenticated) carries events between the two buses.
+Two roles, one Python package (`jason/`). The **body** role (the Mac today, possibly another machine later, so no macOS assumptions outside swappable backends) runs audio and the floor controller; the **brain** role (Windows RTX 4090 today, possibly a cloud GPU later; runs in Docker) runs the LLM, memory, learner and sleep. Each machine has an in-process **event bus**; every event published on it is written to that machine's **raw log**, and a **WebSocket link** (over Tailscale, token-authenticated) carries events between the two buses.
 
 ```
 jason/
@@ -25,18 +25,18 @@ jason/
   core/config.py    TOML config per role; link token
   core/state.py     brain's state.json: day counter + current session
   log/rawlog.py     append-only JSONL, one file per session
-  net/link.py       LinkServer (brain) / LinkClient (Mac); auth, reconnect, clock sync
+  net/link.py       LinkServer (brain) / LinkClient (body); auth, reconnect, clock sync
   net/protocol.py   messages on the wire; PROTOCOL_VERSION
   net/clocksync.py  NTP-style clock offset and round trip
   net/admin.py      one-shot commands to a running brain (/admin)
-  mac/main.py       Mac role (M0: pinger)
+  body/main.py      body role (M0: pinger)
   brain/main.py     brain role (M0: ping responder)
-config/mac.toml, config/brain.toml   one config per role (committed, no secrets)
+config/body.toml, config/brain.toml  one config per role (committed, no secrets)
 Dockerfile, compose.yaml             the brain's container
 tests/                               pytest; test_container.py is opt-in
 ```
 
-A **session** is one of Jason's days (wake → sleep), not a calendar date: one raw-log file per session, ids like `day-0007_2026-11-03`, owned by the brain and sent to the Mac on connect.
+A **session** is one of Jason's days (wake → sleep), not a calendar date: one raw-log file per session, ids like `day-0007_2026-11-03`, owned by the brain and sent to the body on connect.
 
 Jason's data lives **outside the repo** in `~/jason-data/` (`state/` for raw logs and later memory; `link_token`). On Windows: `C:\Users\<you>\jason-data`, mounted into the container.
 
@@ -54,7 +54,7 @@ I'm a systems engineer (ex-Google) with some experience in inference performance
 - Tests: `uv run pytest` (strict: `uv run pytest -W error`; container test: `JASON_DOCKER_TESTS=1 uv run pytest tests/test_container.py`)
 - Token (once): `uv run jason gen-token`, then copy `~/jason-data/link_token` to the other machine
 - Run the brain: `docker compose up --build -d` (logs: `docker compose logs -f brain`; stop: `docker compose down`). `config/brain.toml` uses the container's paths, so outside Docker pass a config with local paths
-- Run the Mac: `uv run jason run --role mac` (`--count N` to stop after N pings)
+- Run the body (on the Mac): `uv run jason run --role body` (`--count N` to stop after N pings)
 - New day (until sleep exists): `docker compose exec brain jason new-day`
 - Without `--config`, commands use `config/<role>.toml`
 

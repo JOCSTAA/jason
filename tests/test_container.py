@@ -1,4 +1,4 @@
-"""The brain in its Docker container, with the Mac role connecting from outside.
+"""The brain in its Docker container, with the body role connecting from outside.
 
 Slow (it builds the image) and needs Docker running, so it only runs when asked:
 
@@ -51,14 +51,14 @@ def wait_for_listening(env, timeout=60):
     raise AssertionError("brain container never started listening:\n" + compose(env, "logs").stdout)
 
 
-def test_mac_talks_to_the_containerized_brain(tmp_path):
+def test_body_talks_to_the_containerized_brain(tmp_path):
     data = tmp_path / "jason-data"
     data.mkdir()
     generate_token(data / "link_token")
     port = free_port()
     env = {**os.environ, "JASON_DATA": str(data), "JASON_PORT": str(port)}
-    (tmp_path / "mac.toml").write_text(f"""
-role = "mac"
+    (tmp_path / "body.toml").write_text(f"""
+role = "body"
 machine = "mac"
 state_dir = "mac-state"
 [link]
@@ -71,13 +71,13 @@ clock_sync_s = 0.5
     assert up.returncode == 0, up.stderr
     try:
         wait_for_listening(env)
-        mac = subprocess.run(
-            [sys.executable, "-m", "jason", "run", "--role", "mac",
-             "--config", str(tmp_path / "mac.toml"), "--count", "3", "--every", "0.3"],
+        body = subprocess.run(
+            [sys.executable, "-m", "jason", "run", "--role", "body",
+             "--config", str(tmp_path / "body.toml"), "--count", "3", "--every", "0.3"],
             cwd=tmp_path, capture_output=True, text=True, timeout=120,
         )
-        assert mac.returncode == 0, mac.stdout + mac.stderr
-        assert "3 pings: p50 " in mac.stdout
+        assert body.returncode == 0, body.stdout + body.stderr
+        assert "3 pings: p50 " in body.stdout
 
         new_day = compose(env, "exec", "-T", "brain", "jason", "new-day")
         assert "started day-0002_" in new_day.stdout, new_day.stdout + new_day.stderr

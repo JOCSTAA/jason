@@ -1,7 +1,7 @@
 """The brain's state file: which of Jason's days it is.
 
 <state_dir>/state.json holds the day counter and the current session (one
-wake → sleep cycle). Only the brain has one; the Mac gets the session id from
+wake → sleep cycle). Only the brain has one; the body gets the session id from
 the brain when it connects.
 
 Unlike the raw log, this file is rewritten, so every save writes a temporary

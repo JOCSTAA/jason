@@ -1,16 +1,16 @@
 """Clock-offset and round-trip estimation between machines.
 
-Each machine's monotonic clock starts at an arbitrary point, so a Mac
+Each machine's monotonic clock starts at an arbitrary point, so a body
 timestamp and a brain timestamp can't be compared directly. To measure
-"user stopped talking on the Mac → reply started on the brain", we need the
+"user stopped talking on the body → reply started on the brain", we need the
 offset between the two clocks. This is the same exchange NTP uses:
 
-    Mac  t1 ──── sync ────►  t2  Brain
+    Body  t1 ──── sync ────►  t2  Brain
                              t3  (replies)
-    Mac  t4 ◄── sync_reply ─┘
+    Body  t4 ◄── sync_reply ─┘
 
     round trip = (t4 - t1) - (t3 - t2)        time spent on the network
-    offset     = ((t2 - t1) + (t3 - t4)) / 2  brain clock ≈ Mac clock + offset
+    offset     = ((t2 - t1) + (t3 - t4)) / 2  brain clock ≈ body clock + offset
 
 The offset is exact when the trip there and the trip back take equally long,
 and off by at most half the round trip when they don't. A sample with a short
@@ -25,8 +25,8 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Sample:
     rtt_ns: int  # round trip, network time only
-    offset_ns: int  # brain clock minus Mac clock
-    t4_ns: int  # when the reply arrived (Mac clock)
+    offset_ns: int  # brain clock minus body clock
+    t4_ns: int  # when the reply arrived (body clock)
 
     @property
     def error_ns(self) -> int:
@@ -35,7 +35,7 @@ class Sample:
 
 
 def sample(t1: int, t2: int, t3: int, t4: int) -> Sample:
-    """t1, t4 on the Mac's monotonic clock; t2, t3 on the brain's."""
+    """t1, t4 on the body's monotonic clock; t2, t3 on the brain's."""
     rtt = max(0, (t4 - t1) - (t3 - t2))
     offset = ((t2 - t1) + (t3 - t4)) // 2
     return Sample(rtt_ns=rtt, offset_ns=offset, t4_ns=t4)
@@ -60,12 +60,12 @@ class ClockSync:
         """Forget all samples (e.g. on a new connection: the brain may have rebooted)."""
         self._samples.clear()
 
-    def to_brain(self, mac_ns: int) -> int:
-        """Convert a Mac monotonic timestamp to the brain's clock."""
-        return mac_ns + self._offset()
+    def to_brain(self, body_ns: int) -> int:
+        """Convert a body monotonic timestamp to the brain's clock."""
+        return body_ns + self._offset()
 
-    def to_mac(self, brain_ns: int) -> int:
-        """Convert a brain monotonic timestamp to the Mac's clock."""
+    def to_body(self, brain_ns: int) -> int:
+        """Convert a brain monotonic timestamp to the body's clock."""
         return brain_ns - self._offset()
 
     def _offset(self) -> int:

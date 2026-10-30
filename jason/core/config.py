@@ -1,6 +1,6 @@
 """TOML config loading, plus the link auth token.
 
-Each role has one config file (config/mac.toml, config/brain.toml). Settings
+Each role has one config file (config/body.toml, config/brain.toml). Settings
 that change when the brain moves (its address, where state lives) are here,
 not in code. The auth token is never in a config file or in git: it lives in
 its own file, or in the JASON_LINK_TOKEN environment variable.
@@ -28,7 +28,7 @@ class _Strict(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class MacLink(_Strict):
+class BodyLink(_Strict):
     brain_url: Annotated[str, Field(pattern=r"^wss?://")]
     token_file: Path
     heartbeat_s: Seconds = 2.0  # how often to check the link is alive
@@ -45,11 +45,11 @@ class BrainLink(_Strict):
     timeout_s: Seconds = 10.0
 
 
-class MacConfig(_Strict):
-    role: Literal["mac"]
+class BodyConfig(_Strict):
+    role: Literal["body"]
     machine: MachineName
     state_dir: Path
-    link: MacLink
+    link: BodyLink
 
 
 class BrainConfig(_Strict):
@@ -59,7 +59,7 @@ class BrainConfig(_Strict):
     link: BrainLink
 
 
-Config = MacConfig | BrainConfig
+Config = BodyConfig | BrainConfig
 
 
 def _resolve(value: str, base: Path) -> str:
@@ -69,7 +69,7 @@ def _resolve(value: str, base: Path) -> str:
     return str(path if path.is_absolute() else (base / path).resolve())
 
 
-def load_config(path: Path, role: Literal["mac", "brain"]) -> Config:
+def load_config(path: Path, role: Literal["body", "brain"]) -> Config:
     """Load and validate a config file, checking it is for the expected role."""
     path = Path(path)
     with open(path, "rb") as f:
@@ -90,7 +90,7 @@ def load_config(path: Path, role: Literal["mac", "brain"]) -> Config:
     link = raw.get("link", {})
     if "token_file" in link:
         link["token_file"] = _resolve(link["token_file"], base)
-    model = MacConfig if role == "mac" else BrainConfig
+    model = BodyConfig if role == "body" else BrainConfig
     return model.model_validate(raw)
 
 

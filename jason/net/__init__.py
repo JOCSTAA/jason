@@ -1,1 +1,1 @@
-"""WebSocket link between machines (Mac = client, brain = server)."""
+"""WebSocket link between machines (body = client, brain = server)."""

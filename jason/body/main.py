@@ -1,6 +1,6 @@
-"""Mac-role entry point: `jason run --role mac`.
+"""Body-role entry point: `jason run --role body`.
 
-In M0 the Mac connects to the brain and sends a ping every few seconds,
+In M0 the body connects to the brain and sends a ping every few seconds,
 printing the round trip. Later milestones replace the pinger with the
 microphone, speech-to-text, the floor controller and text-to-speech.
 """
@@ -13,7 +13,7 @@ from collections.abc import Callable
 from jason.core import clock
 from jason.core import events as ev
 from jason.core.bus import EventBus, Subscription
-from jason.core.config import MacConfig, load_token
+from jason.core.config import BodyConfig, load_token
 from jason.log.rawlog import RawLog
 from jason.net.clocksync import sample
 from jason.net.link import LinkClient
@@ -96,8 +96,8 @@ def _offset_note(client: LinkClient) -> str:
     return f" (brain clock offset {best.offset_ns / 1e6:+.3f} ms ± {best.error_ns / 1e6:.3f})"
 
 
-async def run_mac(
-    cfg: MacConfig,
+async def run_body(
+    cfg: BodyConfig,
     count: int | None = None,
     every_s: float = 5.0,
     out: Callable[[str], None] = print,
@@ -118,7 +118,7 @@ async def run_mac(
         async def main() -> list[float]:
             await client.ready.wait()
             out(f"connected; session {bus.session_id}")
-            bus.emit(ev.System, ev.SystemPayload(kind="startup", message="mac started"))
+            bus.emit(ev.System, ev.SystemPayload(kind="startup", message="body started"))
             return await pinger(bus, client, count, every_s, out, rtts, offsets_ms)
 
         work = asyncio.create_task(main())
@@ -135,7 +135,7 @@ async def run_mac(
                 for line in summarize(rtts, offsets_ms):
                     out(line)
             if bus.session_id is not None:
-                bus.emit(ev.System, ev.SystemPayload(kind="shutdown", message="mac stopping"))
+                bus.emit(ev.System, ev.SystemPayload(kind="shutdown", message="body stopping"))
             # Give the link a moment to deliver the last events to the brain.
             if client.connected.is_set():
                 await asyncio.sleep(0.1)
