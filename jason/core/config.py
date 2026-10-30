@@ -58,6 +58,12 @@ class LlmConfig(_Strict):
     max_tokens: Annotated[int, Field(gt=0)] = 256
     temperature: Annotated[float, Field(ge=0.0, le=2.0)] = 0.7
     timeout_s: Seconds = 10.0  # longest wait to connect or for the next streamed piece
+    # Keep the GPU awake during a conversation: on the 4090 Laptop the first
+    # token takes ~380 ms after 2+ s idle and ~40 ms when warm
+    # (scripts/llm_latency_probe.py). A one-token request every warm_interval_s,
+    # until warm_window_s after the user's last sign of activity. 0 turns it off.
+    warm_interval_s: Annotated[float, Field(ge=0)] = 0.75
+    warm_window_s: Annotated[float, Field(ge=0)] = 20.0
 
 
 class BodyConfig(_Strict):

@@ -102,6 +102,8 @@ async def setup(tmp_path, persona):
         fake = fake or FakeVllm()
         rawlog = RawLog(tmp_path, "brain")
         bus = EventBus("brain", rawlog, session_id=SESSION)
+        # Warming off unless a test asks for it, so request counts are exact.
+        cfg = {"warm_interval_s": 0, **cfg}
         config = LlmConfig(base_url="http://llm:8000", model_version="test-model@1", persona_file=persona, **cfg)
         comp = LlmComponent(bus, config, transport=httpx.MockTransport(fake.handler))
         out = bus.subscribe()  # everything, to inspect
@@ -248,3 +250,47 @@ async def test_silent_decisions_are_ignored(setup):
         action=ev.Action.SILENT, action_probs={ev.Action.SILENT: 1.0}, based_on_id=t.id)))
     await asyncio.sleep(0.05)
     assert fake.requests == []
+
+
+# --- keeping the GPU awake --------------------------------------------------------
+
+
+def warmups(fake):
+    return [r for r in fake.requests if r.get("max_tokens") == 1]
+
+
+async def test_no_warmups_before_the_user_shows_up(setup):
+    bus, comp, fake, out = await setup(warm_interval_s=0.02, warm_window_s=1.0)
+    await asyncio.sleep(0.15)
+    assert warmups(fake) == []
+
+
+async def test_activity_keeps_the_gpu_warm_then_it_stops(setup):
+    bus, comp, fake, out = await setup(warm_interval_s=0.02, warm_window_s=0.2)
+    bus.publish(ev.SpeechStart(**BODY, payload=ev.SpeechStartPayload(utterance_id="u1", audio_ns=1, during_agent_speech=False)))
+    await asyncio.sleep(0.15)
+    during = len(warmups(fake))
+    assert during >= 3
+    assert warmups(fake)[0]["messages"][0] == {"role": "system", "content": "You are Jason."}  # keeps the persona cached too
+    await asyncio.sleep(0.3)  # the window has passed
+    settled = len(warmups(fake))
+    await asyncio.sleep(0.15)
+    assert len(warmups(fake)) == settled
+
+
+async def test_no_warmups_while_a_reply_is_generating(setup):
+    bus, comp, fake, out = await setup(FakeVllm(pieces=["Sure thing, "] + ["word "] * 15, delay=0.02),
+                                       warm_interval_s=0.02, warm_window_s=5.0)
+    respond(bus, user_says(bus, "Tell me something"))
+    await collect(out, lambda e: isinstance(e, ev.ReplyChunk))
+    before = len(warmups(fake))
+    await asyncio.sleep(0.15)  # still generating
+    assert len(warmups(fake)) <= before + 1  # at most one that was already on its way
+    await collect(out, lambda e: isinstance(e, ev.AgentUtterance))
+
+
+async def test_warmup_failures_are_ignored(setup):
+    bus, comp, fake, out = await setup(FakeVllm(fail=True), warm_interval_s=0.02, warm_window_s=1.0)
+    user_says(bus, "hello")
+    await asyncio.sleep(0.1)
+    assert len(warmups(fake)) >= 2  # kept trying, didn't crash

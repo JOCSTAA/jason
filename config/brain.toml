@@ -22,3 +22,5 @@ history_turns = 20
 max_tokens = 256
 temperature = 0.7
 timeout_s = 10.0
+warm_interval_s = 0.75                 # keep the GPU awake while a conversation is active
+warm_window_s = 20.0

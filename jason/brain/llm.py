@@ -3,6 +3,7 @@
     agent_action (respond) ──► prompt ──► vLLM (streamed) ──► reply_chunk × N
                                                          └──► agent_utterance (once)
     reply_cancel ──► stop generating          reply_heard ──► history
+    any sign of the user ──► keep the GPU awake for a while
 
 The body decides when Jason speaks (floor controller, design §9); this
 component only decides what he says. It talks to vLLM's OpenAI-compatible API
@@ -11,6 +12,12 @@ and to the rest of Jason only through the bus.
 Prompt layout, stable text first so vLLM's prefix cache covers almost all of it
 every turn (docs/spikes/m0-llm-serving.md): the persona, then the conversation
 so far, then the transcript the decision was based on.
+
+Keeping the GPU awake: on the 4090 Laptop vLLM's first token takes ~40 ms
+while the GPU is busy but ~380 ms after 2 s or more of idling (it falls asleep
+within 1-2 s; scripts/llm_latency_probe.py). So while a conversation is active
+a one-token request goes out every warm_interval_s. This is about the GPU's
+power state, not vLLM's cache: the prompt's prefix stays cached either way.
 """
 
 import asyncio
@@ -96,18 +103,26 @@ class LlmComponent:
         self._transcripts: dict[str, str] = {}  # user_partial/user_final event id -> text
         self._task: asyncio.Task[None] | None = None
         self._action_id: str | None = None  # the reply being generated
+        self._last_activity: int | None = None  # monotonic ns of the user's last sign of life
 
     async def run(self) -> None:
-        types = (ev.UserPartial, ev.UserFinal, ev.AgentAction, ev.ReplyCancel, ev.ReplyHeard)
+        types = (ev.SpeechStart, ev.UserPartial, ev.UserFinal, ev.AgentAction, ev.ReplyCancel, ev.ReplyHeard)
+        warmer = asyncio.create_task(self._keep_warm()) if self.cfg.warm_interval_s > 0 else None
         try:
             with self.bus.subscribe(*types) as events:
                 async for event in events:
                     self._handle(event)
         finally:
+            if warmer:
+                warmer.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await warmer
             await self._stop_generating()
             await self.client.aclose()
 
     def _handle(self, event: ev.Event) -> None:
+        if isinstance(event, ev.SpeechStart | ev.UserPartial | ev.UserFinal | ev.ReplyHeard):
+            self._last_activity = clock.monotonic_ns()
         match event:
             case ev.UserPartial() | ev.UserFinal():
                 self._transcripts[event.id] = event.payload.text
@@ -188,6 +203,23 @@ class LlmComponent:
             )
             if self._action_id == action.id:
                 self._action_id = None
+
+    async def _keep_warm(self) -> None:
+        """While the user was active within warm_window_s, send a one-token
+        request every warm_interval_s, unless a real reply is keeping the GPU
+        busy already. Failures are ignored: it's only a nudge."""
+        body = {"model": self.cfg.model, "max_tokens": 1, "temperature": 0,
+                "messages": [{"role": "system", "content": self.persona}, {"role": "user", "content": "."}]}
+        window_ns = int(self.cfg.warm_window_s * 1e9)
+        while True:
+            await asyncio.sleep(self.cfg.warm_interval_s)
+            active = self._last_activity is not None and clock.monotonic_ns() - self._last_activity < window_ns
+            generating = self._task is not None and not self._task.done()
+            if active and not generating:
+                try:
+                    await self.client.post("/v1/chat/completions", json=body)
+                except httpx.HTTPError as e:
+                    log.debug("warm-up request failed: %s", e)
 
     def _latency(self, stage: ev.LatencyStage, t0: int, ref_id: str) -> None:
         self.bus.emit(ev.LatencyMark, ev.LatencyMarkPayload(stage=stage, duration_ns=clock.monotonic_ns() - t0, ref_id=ref_id))
