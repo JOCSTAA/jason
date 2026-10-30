@@ -63,7 +63,7 @@ class LlmConfig(_Strict):
     # (scripts/llm_latency_probe.py). A one-token request every warm_interval_s,
     # until warm_window_s after the user's last sign of activity. 0 turns it off.
     warm_interval_s: Annotated[float, Field(ge=0)] = 0.75
-    warm_window_s: Annotated[float, Field(ge=0)] = 20.0
+    warm_window_s: Annotated[float, Field(ge=0)] = 60.0
 
 
 class BodyConfig(_Strict):

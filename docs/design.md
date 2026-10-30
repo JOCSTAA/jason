@@ -407,7 +407,7 @@ Neutral but important facts (no reaction) are protected by the use and explicit-
 - Target under ~1 s to first audio. Expected budget: turn decision 200–300 ms + STT 50–100 ms + LLM first token 100–200 ms + TTS first chunk 50–200 ms + network ~10 ms median, ~45 ms p99 (measured over Tailscale, `spikes/m0-link-latency.md`) ≈ 0.5–0.8 s.
 - Can be interrupted (barge-in).
 - Per-stage latency logged from day one.
-- **Keep the GPU awake during a conversation [Decided].** On the 4090 Laptop vLLM's first token takes ~40 ms while the GPU is busy but ~380 ms after 2 s or more idle; it falls asleep within 1–2 s (`scripts/llm_latency_probe.py`). While the user has shown any sign of activity in the last 20 s, the brain sends vLLM a one-token request every 0.75 s (skipped while a reply is generating). It's about the GPU's power state, not the prompt cache. Both settings live in the brain's `[llm]` config; 0 turns it off for hardware that doesn't idle like this.
+- **Keep the GPU awake during a conversation [Decided].** On the 4090 Laptop vLLM's first token takes ~40 ms while the GPU is busy but ~380 ms after 2 s or more idle; it falls asleep within 1–2 s (`scripts/llm_latency_probe.py`). While the user has shown any sign of activity in the last 60 s, the brain sends vLLM a one-token request every 0.75 s (skipped while a reply is generating). It's about the GPU's power state, not the prompt cache. Both settings live in the brain's `[llm]` config; 0 turns it off for hardware that doesn't idle like this.
 
 ---
 
