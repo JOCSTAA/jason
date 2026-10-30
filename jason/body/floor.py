@@ -4,16 +4,22 @@ Every tick (100 ms) it looks at the conversation and chooses between two of
 the six actions: `silent` (keep listening) and `respond` (answer now). M5 adds
 backchannel, interject and ask.
 
-This is a hand-written rule, "rules-1", not a learned policy. How long a
+This is a hand-written rule ("rules-2"), not a learned policy. How long a
 pause it waits for depends on how finished the user sounds (Smart Turn):
 
     end-of-turn probability ≥ 0.7   answer after 200 ms of silence
     0.3 – 0.7                       answer after 700 ms
     < 0.3 (mid-thought)             answer after 1.5 s
 
-and talking again resets the clock. It only answers with a transcript of
-everything said up to the pause, never twice for one utterance, and never
-while Jason is speaking (barge-in is step 12).
+and talking again resets the clock. A transcript that ends on a word a
+sentence can't end with ("what's a", "I went to the") counts as unsure
+whatever Smart Turn says: Smart Turn hears how a phrase sounds, not its
+words, and scored "What's a" 0.80 in the first live chat, so Jason answered
+a fragment while the user was still talking (added in "rules-2").
+
+It only answers with a transcript of everything said up to the pause, never
+twice for one utterance, and never while Jason is speaking (barge-in is step
+12).
 
 Decisions are logged at decision points, not every tick: once when a pause
 has its transcript and turn probability (`silent`: waiting), and when it
@@ -34,6 +40,22 @@ from jason.core.bus import EventBus
 from jason.core.config import FloorConfig
 
 log = logging.getLogger(__name__)
+
+# Words an English sentence almost never ends on: articles, prepositions,
+# conjunctions, possessives, auxiliaries and fillers. A pause after one is a
+# pause mid-sentence.
+UNFINISHED_ENDINGS = frozenset("""
+    a an the to of in on at for with from by about into onto over under than as
+    and or but so because if that which who whose when where while
+    my your his her their our its this these those
+    is are was were am be been being do does did have has had will would can could should
+    um uh er erm like
+""".split())
+
+
+def ends_unfinished(text: str) -> bool:
+    words = text.lower().replace("’", "'").split()
+    return bool(words) and words[-1].strip(".,!?;:\"'") in UNFINISHED_ENDINGS
 
 
 @dataclass
@@ -121,6 +143,8 @@ class FloorController:
             return
         pause_ms = (now - t.pause_start_ns) / 1e6
         wait = self.wait_ms(t.turn_prob)
+        if ends_unfinished(t.final_text):
+            wait = max(wait, self.cfg.wait_unsure_ms)
         if pause_ms >= wait:
             self._decide(ev.Action.RESPOND, t, pause_ms, wait, now)
         elif not t.waiting_logged:
@@ -133,6 +157,7 @@ class FloorController:
             "turn_end_prob": round(t.turn_prob, 4),
             "speech_ms": round(t.speech_ms, 1),
             "words": float(len(t.final_text.split())),
+            "ends_unfinished": float(ends_unfinished(t.final_text)),
             "wait_ms": wait,  # the rule's target for this pause
             "since_jason_ms": round((now - self._last_jason_ns) / 1e6, 1) if self._last_jason_ns else -1.0,
         }

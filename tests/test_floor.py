@@ -62,8 +62,8 @@ async def test_a_finished_sentence_gets_an_answer_after_200ms(setup):
     [action], marks = decisions(out)
     p = action.payload
     assert (p.action, p.action_probs, p.based_on_id, p.utterance_id) == (ev.Action.RESPOND, {ev.Action.RESPOND: 1.0}, final_id, "u1")
-    assert p.policy_version == "rules-1"
-    assert set(p.features) == {"pause_ms", "turn_end_prob", "speech_ms", "words", "wait_ms", "since_jason_ms"}
+    assert p.policy_version == "rules-2"
+    assert set(p.features) == {"pause_ms", "turn_end_prob", "speech_ms", "words", "ends_unfinished", "wait_ms", "since_jason_ms"}
     assert (p.features["turn_end_prob"], p.features["words"], p.features["wait_ms"]) == (0.9, 3.0, 200.0)
     [mark] = marks
     assert mark.payload.stage is ev.LatencyStage.TURN_DECISION and mark.payload.ref_id == action.id
@@ -133,3 +133,22 @@ async def test_time_to_first_audio_is_logged_when_the_reply_starts_playing(setup
     [first] = [m for m in marks if m.payload.stage is ev.LatencyStage.FIRST_AUDIO]
     assert first.payload.duration_ns == 640 * MS and first.payload.ref_id == action.id
 
+
+
+@pytest.mark.parametrize("text,unfinished", [
+    ("What's a", True), ("I went to the", True), ("I was thinking, um", True), ("and", True),
+    ("What's the weather?", False), ("Just hanging out.", False), ("Is it?", False), ("", False),
+])
+def test_endings_a_sentence_cannot_have(text, unfinished):
+    from jason.body.floor import ends_unfinished
+
+    assert ends_unfinished(text) is unfinished
+
+
+async def test_a_fragment_waits_like_an_unsure_pause_even_if_smart_turn_is_sure(setup):
+    bus, floor, out, state = setup
+    utterance(bus, floor, prob=0.80, ago_ms=300, text="What's a")  # the first live chat's false finish
+    floor.tick()
+    actions, _ = decisions(out)
+    assert [a.payload.action for a in actions] == [ev.Action.SILENT]
+    assert (actions[0].payload.features["wait_ms"], actions[0].payload.features["ends_unfinished"]) == (700.0, 1.0)

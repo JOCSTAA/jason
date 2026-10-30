@@ -132,7 +132,7 @@ class FloorConfig(_Strict):
     wait_unsure_ms: Annotated[float, Field(ge=0)] = 700.0
     wait_unlikely_ms: Annotated[float, Field(ge=0)] = 1500.0
     tick_ms: Annotated[float, Field(gt=0)] = 100.0  # how often it looks
-    policy_version: str = "rules-1"
+    policy_version: str = "rules-2"  # bump whenever the rule changes: logged decisions say which rule made them
 
 
 class BodyConfig(_Strict):
